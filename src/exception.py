@@ -21,6 +21,10 @@ def get_error_details(exception_message, sys_module: sys):
     # Extracts the traceback object
     _, _, traceback_info = sys_module.exc_info()
 
+    # If traceback_info is None, return a basic error message
+    if traceback_info is None:
+        return f"Error: {exception_message} - No traceback information available."
+
     # Get the file name where the exception occurred
     file_name = traceback_info.tb_frame.f_code.co_filename
 
