@@ -3,6 +3,10 @@ import logging
 
 from datetime import datetime  
 
+from src.utils import get_root_directory
+
+# Get the root directory
+root_dir = get_root_directory()
 
 # Generate a log file name with the current date and time
 # This helps in creating unique log files based on the time the script runs.
@@ -10,7 +14,7 @@ log_filename = f"{datetime.now().strftime('%m-%d-%Y@%H-%M-%S')}.log"
 
 # Define the directory where logs will be saved
 # 'logs' folder will be created inside the 'reports' folder in the current working directory (if not already present).
-log_dir = os.path.join(os.getcwd(), "logs")
+log_dir = os.path.join(root_dir, "logs")
 
 # Create the logs directory if it doesn't exist
 # The `exist_ok=True` ensures no error is raised if the folder already exists.

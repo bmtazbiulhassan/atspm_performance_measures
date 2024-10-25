@@ -5,12 +5,14 @@ import sys
 import os
 
 from bs4 import BeautifulSoup
-from selenium.webdriver.common.by import By
 
 from src.exception import CustomException
 from src.logger import logging
-from src.utils import init_driver
+from src.utils import get_root_directory, init_driver
 
+
+# Get the root directory
+root_dir = get_root_directory()
 
 def scrape_noemi_report(signal_id: str, siia_id: str):
     """
@@ -32,8 +34,8 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
         # Log the start of the scraping process for the given SIIA ID
         logging.info(f"Scraping NOEMI reports for SIIA ID: {siia_id}")
 
-        # Load the YAML configuration file
-        with open("config.yaml", "r") as file:
+        # Load the YAML configuration file (using absolute path)
+        with open(os.path.join(root_dir, 'config.yaml'), "r") as file:
             config = yaml.safe_load(file)
 
         # Retrieve the URL template from the YAML config and replace '{}' with the actual SIIA ID
@@ -86,7 +88,7 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
             logging.info(f"Successfully extracted data for table {table_id} from the NOEMI report for SIIA ID: {siia_id}")
 
             # Define the path for saving the CSV file in the respective table's folder
-            table_path = os.path.join(parent_dir, table_id)
+            table_path = os.path.join(root_dir, parent_dir, table_id)
             os.makedirs(table_path, exist_ok=True)  # Create directory if it does not exist
 
             # Save the DataFrame as a CSV file named by the signal_id within the table's folder
@@ -94,6 +96,7 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
 
             # Log the file save operation with the path
             logging.info(f"Saving scraped NOEMI report to...{table_path}/{signal_id}.csv")
+
     except Exception as e:
         # Log the error if scraping fails and raise a custom exception
         logging.error(f"Error: '{e}' raised while scraping NOEMI reports for SIIA ID: {siia_id}")
