@@ -1,4 +1,11 @@
 numpy
 pandas
 tqdm
--e .
+requests
+jupyter
+selenium
+webdriver_manager
+pyyaml
+bs4
+
+# -e .
