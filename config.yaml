@@ -1,3 +1,23 @@
-# Data Ingestion
-# urls
-url_noemi_report: 'https://noemi.cflsmartroads.com/ssv/report.html?id={}'
+# Data Ingestion 
+# Configurations for scrape_noemi_report()
+noemi_report:
+  # URL template for accessing individual reports. Replace "{}" with the SIIA ID to retrieve report of a specific intersection.
+  url: "https://noemi.cflsmartroads.com/ssv/report.html?id={}"
+  
+  # List of table ids within the report to be extracted (ids identified by inspecting HTML).
+  table_ids:
+    - "intersection"
+    - "controller"
+    - "approach"
+    - "lanes"
+  
+  # Base directory path for storing extracted tables from the NOEMI report.
+  # This directory will have sub-folders identified by table ids. The sub-folders will have the tables.
+  parent_dir: "data/raw/atspm/noemi_report"
+
+
+
+
+
+
+
