@@ -4,106 +4,279 @@ import yaml
 import sys
 import os
 
+from datetime import datetime
+
 from bs4 import BeautifulSoup
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from src.exception import CustomException
 from src.logger import logging
 from src.utils import get_root_directory, init_driver
+from dotenv import load_dotenv
 
 
-# Get the root directory
+# Load the environment variables from the .env file
+load_dotenv()
+
+# Get the root directory of the project
 root_dir = get_root_directory()
+
+# Load the YAML configuration file (using absolute path)
+with open(os.path.join(root_dir, 'config.yaml'), "r") as file:
+    config = yaml.safe_load(file)
+
+config = config["data_scraping"]
+
+# Retrieve wait time (in sec) to load web page while scraping
+wait_time = config["wait_time"]
+
+# Retrieve list of supported web browsers for scraping data
+browser_types = config["browser_types"]
+
 
 def scrape_noemi_report(signal_id: str, siia_id: str):
     """
-    Scrapes NOEMI report data from a specified URL for a given SIIA ID and saves the extracted tables as CSV files.
+    Scrapes NOEMI report data for a specific SIIA ID and saves extracted tables as CSV files.
 
     Parameters:
     -----------
     signal_id : str
-        Identifier for the signal, used to name the CSV files.
+        Unique identifier for the signal, used to name the CSV files.
     siia_id : str
         SIIA ID used to access the specific report URL.
 
     Returns:
     --------
     None
-        Saves the extracted tables to CSV files within the specified directory.
+        Saves extracted tables to CSV files within the specified directory.
     """
-    try: 
-        # Log the start of the scraping process for the given SIIA ID
-        logging.info(f"Scraping NOEMI reports for SIIA ID: {siia_id}")
+    driver = None
+    # Initialize a browser driver in sequence until successful
+    for browser_type in browser_types:
+        driver = init_driver(browser_type=browser_type)
+        if driver:
+            logging.info(f"{browser_type.capitalize()} driver initialized successfully.")
+            break  # Proceed if a driver is initialized
+    
+    try:
+        logging.info(f"Starting NOEMI report scraping for SIIA ID: {siia_id}")
 
-        # Load the YAML configuration file (using absolute path)
-        with open(os.path.join(root_dir, 'config.yaml'), "r") as file:
-            config = yaml.safe_load(file)
+        # Generate the URL by replacing SIIA ID placeholder in the base URL
+        url = config["noemi"]["url"].replace("{}", str(siia_id))
 
-        # Retrieve the URL template from the YAML config and replace '{}' with the actual SIIA ID
-        url = config["noemi_report"]["url"].replace("{}", f"{siia_id}")
+        # Load configuration settings for tables and directories
+        table_ids = config["noemi"]["table_ids"]
+        relative_dir = config["noemi"]["relative_dir"]
 
-        # Retrieve the table IDs to be extracted from the YAML config
-        table_ids = config["noemi_report"]["table_ids"]
+        # Open the report URL and wait for page to load
+        driver.get(url)
+        time.sleep(wait_time)
 
-        # Retrieve the parent directory path for saving tables from the YAML config
-        parent_dir = config["noemi_report"]["parent_dir"]
-
-        # Initialize the web driver for Chrome
-        driver = init_driver("chrome")
-
-        # Open the specified report URL in the web driver
-        driver.get(url) 
-        time.sleep(5)  # Wait (5 sec) for the page to load completely
-
-        # Parse the page source using BeautifulSoup
+        # Parse page source with BeautifulSoup
         soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-        # Extract all tables from the page source
-        report_content = soup.find_all('table')
-        for i in range(len(report_content)):
-            # Retrieve the ID of each table
-            table_id = report_content[i]['id']
+        # Extract all tables from page source
+        page_table_content = soup.find_all('table')
+        for table_content in page_table_content:
+            # Get ID of each table and check if it's in the specified table IDs
+            table_id = table_content.get('id', None)
+            if table_id and table_id in table_ids:
+                # Extract column headers and table rows
+                headers = [header.text.strip() for header in table_content.find('thead').find_all('th')]
+                data = [[cell.text.strip() for cell in row.find_all('td')] for row in table_content.find('tbody').find_all('tr')]
 
-            # Continue only if the table ID is in the specified table IDs to extract
-            if table_id not in table_ids:
-                continue
+                # Create DataFrame with extracted headers
+                df_data = pd.DataFrame(data=data, columns=headers)
 
-            # Select the table based on the table ID
-            table = report_content[i]
+                logging.info(f"Extracted data for table '{table_id}' from NOEMI report for SIIA ID: {siia_id}")
 
-            # Extract column names from the table header
-            column_names = [table_content.text for table_content in table.find('thead').find_all('th')]
+                # Directory for saving table data as CSV
+                absolute_export_dir = os.path.join(root_dir, relative_dir, table_id)
+                os.makedirs(absolute_export_dir, exist_ok=True)
 
-            # Extract table content from the table body rows
-            table_content = table.find('tbody').find_all('tr')
+                # Define the report file path and save the DataFrame
+                report_filepath = os.path.join(absolute_export_dir, f"{signal_id}.csv")
+                df_data.to_csv(report_filepath, index=False)
 
-            data = []
-            for j in range(len(table_content)):
-                # Extract text content for each cell in the row
-                data.append([content.text for content in table_content[j]])
-
-            # Convert the extracted data into a DataFrame with the column names
-            df_data = pd.DataFrame(data=data, columns=column_names) 
-
-            # Log the success of the scraping process for the current table
-            logging.info(f"Successfully extracted data for table {table_id} from the NOEMI report for SIIA ID: {siia_id}")
-
-            # Define the path for saving the CSV file in the respective table's folder
-            table_path = os.path.join(root_dir, parent_dir, table_id)
-            os.makedirs(table_path, exist_ok=True)  # Create directory if it does not exist
-
-            # Save the DataFrame as a CSV file named by the signal_id within the table's folder
-            df_data.to_csv(f"{table_path}/{signal_id}.csv", index=False)
-
-            # Log the file save operation with the path
-            logging.info(f"Saving scraped NOEMI report to...{table_path}/{signal_id}.csv")
+                # Log the file saving operation and its path
+                logging.info(f"Saved NOEMI report data to {report_filepath}")
 
     except Exception as e:
-        # Log the error if scraping fails and raise a custom exception
-        logging.error(f"Error: '{e}' raised while scraping NOEMI reports for SIIA ID: {siia_id}")
-        raise CustomException(custom_message=e, sys_module=sys)
+        # Log and raise exception if scraping fails
+        logging.error(f"Error while scraping NOEMI report for SIIA ID: {siia_id} - {e}")
+        raise CustomException(custom_message=str(e), sys_module=sys)
+    
+    finally:
+        # Ensure the driver is closed after the process is complete
+        if driver:
+            driver.quit()
 
 
+def scrape_event_data(day: int, month: int, year: int):
+    """
+    Scrapes ATSPM event data for a specific date from the Sunstore portal.
+    
+    Parameters:
+    -----------
+    day : int
+        Day of the desired date (1-31).
+    month : int
+        Month of the desired date (1-12).
+    year : int
+        Year of the desired date (e.g., 2024).
+        
+    Returns:
+    --------
+    None
+        Initiates download of data files for the specified date from the Sunstore portal.
+        
+    Raises:
+    -------
+    CustomException
+        If any error occurs during login, navigation, or data extraction process.
+    """
+    # Convert day, month, and year to a pandas Timestamp for date comparison
+    date = pd.Timestamp(datetime(year, month, day))
 
+    # Retrieve relative path to store event data and construct absolute download path
+    relative_dir = config["sunstore"]["relative_dir"]
+    absolute_download_dir = os.path.join(root_dir, relative_dir, f"{year}-{month:02d}-{day:02d}")
+    os.makedirs(absolute_download_dir, exist_ok=True)  # Create the directory if it doesn't exist
+    
+    driver = None
+    # Initialize a browser driver for each browser type in sequence until successful
+    for browser_type in browser_types:
+        driver = init_driver(browser_type=browser_type, download_dir=absolute_download_dir)
+        if driver:
+            logging.info(f"{browser_type.capitalize()} driver initialized successfully.")
+            break  # Continue with scraping if a driver is successfully initialized
+    
+    try: 
+        logging.info(f"Scraping ATSPM event data for date: {date}")
+
+        # Retrieve the Sunstore URL from configuration and open it in the browser
+        url = config["sunstore"]["url"]
+        driver.get(url) 
+
+        # Wait until the login link is clickable, then click to proceed to login
+        login_link = WebDriverWait(driver, wait_time).until(
+            EC.element_to_be_clickable((By.XPATH, "//a[@href='/login']"))
+        )
+        login_link.click()
+
+        # Retrieve maximum login attempts allowed from configuration
+        max_attempts = config["sunstore"]["max_attempts"]
+
+        # Attempt login up to the maximum allowed attempts
+        for attempt in range(1, max_attempts + 1):
+            try:
+                print(f"\nAttempt {attempt} of {max_attempts} to Login")
+
+                # Wait for input fields for username and password to be visible
+                usermail = WebDriverWait(driver, wait_time).until(
+                    EC.visibility_of_element_located((By.XPATH, "//input[@placeholder='Username or Email']"))
+                )
+                password = WebDriverWait(driver, wait_time).until(
+                    EC.visibility_of_element_located((By.XPATH, "//input[@placeholder='Password']"))
+                )
+
+                # Input credentials (ideally, these should be secured and not hard-coded)
+                usermail.send_keys(os.getenv("usermail"))
+                password.send_keys(os.getenv("password"))
+
+                # Click the login button to attempt logging in
+                login_button = WebDriverWait(driver, wait_time).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[@title='Log In']"))
+                )
+                login_button.click()
+
+                # Verify login by locating the staged files link and clicking it to continue
+                staged_files_button = WebDriverWait(driver, wait_time).until(
+                    EC.element_to_be_clickable((By.XPATH, "//a[@href='/stagedfiles']"))
+                )
+                
+                print("Login successful!")
+                staged_files_button.click()  # Navigate to the staged files section
+                break  # Exit login loop after a successful login
+
+            except Exception as e:
+                # Log and inform the user of failed login attempts
+                logging.warning(f"Login attempt {attempt} failed: {e}")
+                print("Incorrect credentials. Please try again.")
+                usermail.clear()
+                password.clear()
+                if attempt == max_attempts:
+                    raise CustomException(custom_message="Maximum login attempts exceeded. Login failed.", sys_module=sys)
+
+        # Wait for the staged files page to fully load
+        time.sleep(wait_time)
+
+        # Retrieve and parse the page source after navigating to staged files
+        page_source = driver.page_source
+        soup = BeautifulSoup(page_source, "html.parser")
+        page_table_content = soup.find_all('table')
+
+        # Iterate over tables on the page to find the correct date and download link
+        for table_content in page_table_content:
+            # Extract column headers from the table to identify necessary columns
+            table_headers = table_content.find('thead').find_all('th')
+            headers = [header.text.strip() for header in table_headers]  # Column names
+
+            # Retrieve column names for date and download link from configuration
+            date_column_name = config["sunstore"]["date_column_name"]
+            link_column_name = config["sunstore"]["link_column_name"]
+
+            # Determine column indices for date and download link columns
+            date_column_index = headers.index(date_column_name)
+            link_column_index = headers.index(link_column_name)
+
+            is_csv = False
+            # Loop through table rows to find the row matching the specified date
+            table_body = table_content.find('tbody').find_all('tr')
+            for row in table_body:
+                # Extract cell data for each row
+                row_data = [cell.text.strip() for cell in row.find_all('td')]
+                if date == pd.Timestamp(row_data[date_column_index]):
+
+                    # Check if the row contains a CSV file
+                    if "csv" in row_data:
+                        is_csv = True
+
+                    # Find the download link cell in the specified column and extract the link
+                    link_cell = row.find_all("td")[link_column_index]
+                    download_link_tag = link_cell.find("a", href=True)
+                    
+                    if download_link_tag:
+                        # Retrieve and click the download link
+                        download_link = download_link_tag["href"]
+                        WebDriverWait(driver, wait_time).until(
+                            EC.element_to_be_clickable((By.XPATH, f"//a[@href='{download_link}']"))
+                        ).click()
+                        logging.info(f"Clicked on download link: {download_link}")
+                        
+                        # Allow some time for the download to start
+                        time.sleep(wait_time)  
+                        break  # Exit loop after clicking the download link
+
+            # Break the outer loop if a CSV download link is found
+            if is_csv:
+                break
+
+    except Exception as e:
+        # Log and raise an exception if any error occurs during scraping
+        logging.error(f"Error: '{e}' occurred while scraping ATSPM event data for date: {date}")
+        raise CustomException(custom_message=str(e), sys_module=sys) 
+
+    finally:
+        # Ensure the driver is closed after completion
+        if driver:
+            driver.quit()
+
+
+if __name__ == "__main__":
+    scrape_event_data(day=20, month=10, year=2024)
 
 
 
