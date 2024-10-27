@@ -1,4 +1,6 @@
+import re
 import sys
+import pandas as pd
 
 from pathlib import Path
 
@@ -89,7 +91,39 @@ def init_driver(browser_type: str = "chrome", download_dir: str = None):
             sys_module=sys
         )
 
+def get_column_name_by_partial_name(df: pd.DataFrame, partial_name: str):
+    """
+    Finds and returns the first column name in the DataFrame that matches the given partial name.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame to search for the column.
+    partial_name : str
+        The partial name to search for in the column names.
+
+    Returns:
+    --------
+    str
+        The name of the first column that matches the partial name.
     
+    Raises:
+    -------
+    CustomException
+        If no column with the given partial name is found.
+    """
+    # Compile a regular expression pattern for case-insensitive search
+    pattern = re.compile(partial_name, re.IGNORECASE)
+
+    # Search for a matching column
+    matching_column_name = next((col for col in df.columns if pattern.search(col)), None)
+    
+    # Raise an error if no column is found
+    if matching_column_name is None:
+        raise CustomException(f"No column with partial name '{partial_name}' found.", sys_module=sys)
+    
+    return matching_column_name
+
     
 
 

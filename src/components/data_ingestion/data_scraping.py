@@ -50,7 +50,7 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
     Returns:
     --------
     None
-        Saves extracted tables to CSV files within the specified directory.
+        Saves extracted tables (from NOEMI report) to CSV files within the specified directory.
     """
     driver = None
     # Initialize a browser driver in sequence until successful
@@ -68,7 +68,7 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
 
         # Load configuration settings for tables and directories
         table_ids = config["noemi"]["table_ids"]
-        relative_dir = config["noemi"]["relative_dir"]
+        relative_export_parent_dir = config["noemi"]["relative_export_parent_dir"]
 
         # Open the report URL and wait for page to load
         driver.get(url)
@@ -85,20 +85,20 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
             if table_id and table_id in table_ids:
                 # Extract column headers and table rows
                 headers = [header.text.strip() for header in table_content.find('thead').find_all('th')]
-                data = [[cell.text.strip() for cell in row.find_all('td')] for row in table_content.find('tbody').find_all('tr')]
+                report = [[cell.text.strip() for cell in row.find_all('td')] for row in table_content.find('tbody').find_all('tr')]
 
                 # Create DataFrame with extracted headers
-                df_data = pd.DataFrame(data=data, columns=headers)
+                df_report = pd.DataFrame(data=report, columns=headers)
 
                 logging.info(f"Extracted data for table '{table_id}' from NOEMI report for SIIA ID: {siia_id}")
 
                 # Directory for saving table data as CSV
-                export_dir = os.path.join(root_dir, relative_dir, table_id) # Absolute path
-                os.makedirs(export_dir, exist_ok=True)
+                absolute_export_dir = os.path.join(root_dir, relative_export_parent_dir, table_id) # Absolute path
+                os.makedirs(absolute_export_dir, exist_ok=True)
 
                 # Define the report file path and save the DataFrame
-                report_filepath = os.path.join(export_dir, f"{signal_id}.csv")
-                df_data.to_csv(report_filepath, index=False)
+                report_filepath = os.path.join(absolute_export_dir, f"{signal_id}.csv")
+                df_report.to_csv(report_filepath, index=False)
 
                 # Log the file saving operation and its path
                 logging.info(f"Saved NOEMI report data to {report_filepath}")
@@ -139,16 +139,30 @@ def scrape_event_data(day: int, month: int, year: int):
     """
     # Convert day, month, and year to a pandas Timestamp for date comparison
     date = pd.Timestamp(datetime(year, month, day))
+    date = date - pd.Timedelta(days=1)
+
+    # Get today's date as a pandas Timestamp
+    today_date = pd.Timestamp(datetime.today().date())
+    date_range_start = today_date - pd.Timedelta(days=21)
+    
+    # Check if the requested date is within the allowable 20-day range and strictly before today
+    if date < date_range_start or date >= today_date:
+        raise CustomException(
+            custom_message=(
+                f"You can only scrape data between {date_range_start.strftime('%Y-%m-%d')} and {(today_date - pd.Timedelta(days=1)).strftime('%Y-%m-%d')}"
+            ),
+            sys_module=sys
+        )
 
     # Retrieve relative path to store event data and construct absolute download path
-    relative_dir = config["sunstore"]["relative_dir"]
-    download_dir = os.path.join(root_dir, relative_dir, f"{year}-{month:02d}-{day:02d}") # Absolute path
-    os.makedirs(download_dir, exist_ok=True)  # Create the directory if it doesn't exist
+    relative_export_parent_dir = config["sunstore"]["relative_export_parent_dir"]
+    absolute_export_dir = os.path.join(root_dir, relative_export_parent_dir, f"{year}-{month:02d}") # Absolute path
+    os.makedirs(absolute_export_dir, exist_ok=True)  # Create the directory if it doesn't exist
     
     driver = None
     # Initialize a browser driver for each browser type in sequence until successful
     for browser_type in browser_types:
-        driver = init_driver(browser_type=browser_type, download_dir=download_dir)
+        driver = init_driver(browser_type=browser_type, download_dir=absolute_export_dir)
         if driver:
             logging.info(f"{browser_type.capitalize()} driver initialized successfully.")
             break  # Continue with scraping if a driver is successfully initialized
@@ -183,8 +197,8 @@ def scrape_event_data(day: int, month: int, year: int):
                 )
 
                 # Input credentials (ideally, these should be secured and not hard-coded)
-                usermail.send_keys(os.getenv("usermail"))
-                password.send_keys(os.getenv("password"))
+                usermail.send_keys(os.getenv("sunstore_usermail"))
+                password.send_keys(os.getenv("sunstore_password"))
 
                 # Click the login button to attempt logging in
                 login_button = WebDriverWait(driver, wait_time).until(
@@ -197,7 +211,7 @@ def scrape_event_data(day: int, month: int, year: int):
                     EC.element_to_be_clickable((By.XPATH, "//a[@href='/stagedfiles']"))
                 )
                 
-                print("Login successful!")
+                print("Login Successful!")
                 staged_files_button.click()  # Navigate to the staged files section
                 break  # Exit login loop after a successful login
 
@@ -251,7 +265,6 @@ def scrape_event_data(day: int, month: int, year: int):
                     if download_link_tag:
                         # Retrieve and click the download link
                         download_link = download_link_tag["href"]
-                        print(download_link)
                         WebDriverWait(driver, wait_time).until(
                             EC.element_to_be_clickable((By.XPATH, f"//a[@href='{download_link}']"))
                         ).click()
@@ -261,7 +274,7 @@ def scrape_event_data(day: int, month: int, year: int):
                         time.sleep(wait_time)
                         
                         # Wait for the download to complete
-                        wait_for_download_completion(download_dir)  
+                        wait_for_download_completion(download_dir=absolute_export_dir)  
 
                         logging.info("Download completed")
                         break  # Exit loop after clicking the download link
