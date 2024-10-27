@@ -93,11 +93,11 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
                 logging.info(f"Extracted data for table '{table_id}' from NOEMI report for SIIA ID: {siia_id}")
 
                 # Directory for saving table data as CSV
-                absolute_export_dir = os.path.join(root_dir, relative_dir, table_id)
-                os.makedirs(absolute_export_dir, exist_ok=True)
+                export_dir = os.path.join(root_dir, relative_dir, table_id) # Absolute path
+                os.makedirs(export_dir, exist_ok=True)
 
                 # Define the report file path and save the DataFrame
-                report_filepath = os.path.join(absolute_export_dir, f"{signal_id}.csv")
+                report_filepath = os.path.join(export_dir, f"{signal_id}.csv")
                 df_data.to_csv(report_filepath, index=False)
 
                 # Log the file saving operation and its path
@@ -142,13 +142,13 @@ def scrape_event_data(day: int, month: int, year: int):
 
     # Retrieve relative path to store event data and construct absolute download path
     relative_dir = config["sunstore"]["relative_dir"]
-    absolute_download_dir = os.path.join(root_dir, relative_dir, f"{year}-{month:02d}-{day:02d}")
-    os.makedirs(absolute_download_dir, exist_ok=True)  # Create the directory if it doesn't exist
+    download_dir = os.path.join(root_dir, relative_dir, f"{year}-{month:02d}-{day:02d}") # Absolute path
+    os.makedirs(download_dir, exist_ok=True)  # Create the directory if it doesn't exist
     
     driver = None
     # Initialize a browser driver for each browser type in sequence until successful
     for browser_type in browser_types:
-        driver = init_driver(browser_type=browser_type, download_dir=absolute_download_dir)
+        driver = init_driver(browser_type=browser_type, download_dir=download_dir)
         if driver:
             logging.info(f"{browser_type.capitalize()} driver initialized successfully.")
             break  # Continue with scraping if a driver is successfully initialized
@@ -251,13 +251,19 @@ def scrape_event_data(day: int, month: int, year: int):
                     if download_link_tag:
                         # Retrieve and click the download link
                         download_link = download_link_tag["href"]
+                        print(download_link)
                         WebDriverWait(driver, wait_time).until(
                             EC.element_to_be_clickable((By.XPATH, f"//a[@href='{download_link}']"))
                         ).click()
+
                         logging.info(f"Clicked on download link: {download_link}")
+
+                        time.sleep(wait_time)
                         
-                        # Allow some time for the download to start
-                        time.sleep(wait_time)  
+                        # Wait for the download to complete
+                        wait_for_download_completion(download_dir)  
+
+                        logging.info("Download completed")
                         break  # Exit loop after clicking the download link
 
             # Break the outer loop if a CSV download link is found
@@ -275,8 +281,22 @@ def scrape_event_data(day: int, month: int, year: int):
             driver.quit()
 
 
-if __name__ == "__main__":
-    scrape_event_data(day=20, month=10, year=2024)
+def wait_for_download_completion(download_dir: str):
+    """
+    Waits until all downloads in the specified directory are complete by checking for any files with the `.crdownload` extension.
+    
+    Parameters:
+    -----------
+    download_dir : str
+        Directory where files are being downloaded.
+        
+    Returns:
+    --------
+    None
+    """
+    # Continuously check for incomplete downloads in the specified directory
+    while any(filename.endswith('.crdownload') for filename in os.listdir(download_dir)):
+        time.sleep(wait_time)  # Check every second if downloads have completed
 
 
 

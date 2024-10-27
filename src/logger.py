@@ -5,8 +5,7 @@ from datetime import datetime
 
 from src.utils import get_root_directory
 
-
-# Get the root directory of the project
+# Get the root directory
 root_dir = get_root_directory()
 
 # Generate a log file name with the current date and time
@@ -30,4 +29,5 @@ logging.basicConfig(
     format="[ %(asctime)s ] %(lineno)d %(name)s - %(levelname)s - %(message)s",  # Set the log format
     level=logging.INFO,  # Set the logging level (INFO level will capture all INFO, WARNING, ERROR, etc.)
 )
+
 
