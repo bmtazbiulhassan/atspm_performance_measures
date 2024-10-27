@@ -1,7 +1,7 @@
 # Data Ingestion Configuration
 # ----------------------------
 # This file contains configurations for various data ingestion processes, 
-# including scraping, processing, and additional data collection components.
+# including scraping, quality check, loading, and cleaning.
 
 # Data Scraping Configuration
 # ---------------------------
