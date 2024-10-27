@@ -1,20 +1,63 @@
-# Data Ingestion 
-# Configurations for scrape_noemi_report()
-noemi_report:
-  # URL template for accessing individual reports. Replace "{}" with the SIIA ID to retrieve report of a specific intersection.
-  url: "https://noemi.cflsmartroads.com/ssv/report.html?id={}"
-  
-  # List of table ids within the report to be extracted (ids identified by inspecting HTML).
-  table_ids:
-    - "intersection"
-    - "controller"
-    - "approach"
-    - "lanes"
-  
-  # Base directory path for storing extracted tables from the NOEMI report.
-  # This directory will have sub-folders identified by table ids. The sub-folders will have the tables.
-  parent_dir: "data/raw/atspm/noemi_report"
+# Data Ingestion Configuration
+# ----------------------------
+# This file contains configurations for various data ingestion processes, 
+# including scraping, processing, and additional data collection components.
 
+# Data Scraping Configuration
+# ---------------------------
+# Settings for scraping data from NOEMI reports and ATSPM event data from the Sunstore portal.
+
+data_scraping:
+  
+  # General Settings
+  # ----------------
+  # Time (in seconds) to wait for pages to fully load before interacting with elements.
+  wait_time: 5
+
+  # List of supported web browsers for scraping data.
+  # Currently configured to use Chrome only.
+  browser_types:
+    - "chrome"
+
+  # NOEMI Report Scraping Configurations
+  # ------------------------------------
+  # Configuration settings for scraping reports from the NOEMI portal.
+  
+  noemi:
+    # Base URL template for accessing individual reports. Replace "{}" with the SIIA ID to retrieve the report for a specific intersection.
+    url: "https://noemi.cflsmartroads.com/ssv/report.html?id={}"
+    
+    # List of table IDs within the report to be extracted (identified by inspecting the HTML structure).
+    table_ids:
+      - "intersection"
+      - "controller"
+      - "approach"
+      - "lanes"
+    
+    # Relative directory path for storing extracted tables from NOEMI reports.
+    # Within this directory, each table will have its own sub-folder identified by table IDs.
+    relative_dir: "data/raw/atspm/fdot_d5/noemi_report"
+
+  # Sunstore Event Data Scraping Configurations
+  # -------------------------------------------
+  # Configuration settings for scraping ATSPM event data from the Sunstore portal.
+  
+  sunstore:
+    # Base URL for accessing the Sunstore portal.
+    url: "https://sunstore.cflsmartroads.com"
+
+    # Maximum number of login attempts allowed for accessing the Sunstore portal.
+    max_attempts: 3
+
+    # Column name in the Sunstore portal table representing the event date.
+    date_column_name: "Date"
+
+    # Column name in the Sunstore portal table containing the download link.
+    link_column_name: "Download"
+
+    # Relative directory path for storing ATSPM event data scraped from Sunstore.
+    # Within this directory, sub-folders will be created by "year-month-day" for each date's event data in CSV format.
+    relative_dir: "data/raw/atspm/fdot_d5/event_data"
 
 
 
