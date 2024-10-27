@@ -3,6 +3,7 @@ pandas
 tqdm
 requests
 jupyter
+python-dotenv
 selenium
 webdriver_manager
 pyyaml
