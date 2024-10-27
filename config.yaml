@@ -1,7 +1,7 @@
 # Data Ingestion Configuration
 # ----------------------------
 # This file contains configurations for various data ingestion processes, 
-# including scraping, quality check, loading, and cleaning.
+# including scraping, sorting, and loading.
 
 # Data Scraping Configuration
 # ---------------------------
@@ -36,7 +36,7 @@ data_scraping:
     
     # Relative directory path for storing extracted tables from NOEMI reports.
     # Within this directory, each table will have its own sub-folder identified by table IDs.
-    relative_dir: "data/raw/atspm/fdot_d5/noemi_report"
+    relative_export_parent_dir: "data/raw/atspm/fdot_d5/noemi_report"
 
   # Sunstore Event Data Scraping Configurations
   # -------------------------------------------
@@ -57,7 +57,7 @@ data_scraping:
 
     # Relative directory path for storing ATSPM event data scraped from Sunstore.
     # Within this directory, sub-folders will be created by "year-month-day" for each date's event data in CSV format.
-    relative_dir: "data/raw/atspm/fdot_d5/event_data"
+    relative_export_parent_dir: "data/raw/atspm/fdot_d5/event_data"
 
 
 
