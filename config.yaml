@@ -1,11 +1,11 @@
 # Data Ingestion Configuration
 # ----------------------------
 # This file contains configurations for various data ingestion processes, 
-# including scraping, sorting, and loading.
+# including scraping, loading, sorting, and pre-processing.
 
 # Data Scraping Configuration
 # ---------------------------
-# Settings for scraping data from NOEMI reports and ATSPM event data from the Sunstore portal.
+# Settings for scraping data from NOEMI reports and ATSPM event data from the Sunstore.
 
 data_scraping:
   
@@ -21,7 +21,7 @@ data_scraping:
 
   # NOEMI Report Scraping Configurations
   # ------------------------------------
-  # Configuration settings for scraping reports from the NOEMI portal.
+  # Configuration settings for scraping reports from the NOEMI.
   
   noemi:
     # Base URL template for accessing individual reports. Replace "{}" with the SIIA ID to retrieve the report for a specific intersection.
@@ -40,7 +40,7 @@ data_scraping:
 
   # Sunstore Event Data Scraping Configurations
   # -------------------------------------------
-  # Configuration settings for scraping ATSPM event data from the Sunstore portal.
+  # Configuration settings for scraping ATSPM event data from the Sunstore.
   
   sunstore:
     # Base URL for accessing the Sunstore portal.
@@ -59,7 +59,34 @@ data_scraping:
     # Within this directory, sub-folders will be created by "year-month-day" for each date's event data in CSV format.
     relative_export_parent_dir: "data/raw/atspm/fdot_d5/event_data"
 
+# Data Pre-processing Configuration
+# ---------------------------------
+# Settings for pre-processing raw NOEMI reports.
 
+data_preprocessing:
+  # Pre-process NOEMI reports
+  noemi:
+    # Relative directory path to the directories containing tables from NOEMI reports
+    relative_import_parent_dir: "data/raw/atspm/fdot_d5/noemi_report"
+
+    # Name of the directory containing the "lanes" report
+    report_dir: "lanes"
+
+    # Mapping for renaming column names in the NOEMI "lanes" report
+    rename_map:
+      Approach: approach
+      Lane Type: laneType
+      Width: width
+      Length: length
+      Lane No. from Left: laneNoFromLeft
+      Type: type
+      Channel: channelNo
+      Phase: phaseNo
+      Stopbar Distance: stopBarDistance
+      Slot Number: slotNo
+
+    # Relative directory path to export the pre-processed "lanes" report (which represents the signal configuration)
+    relative_export_dir: "data/interim/atspm/fdot_d5/signal_config"
 
 
 
