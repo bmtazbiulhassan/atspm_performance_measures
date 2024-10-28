@@ -45,6 +45,7 @@ def get_root_directory(marker: str = 'src'):
         sys_module=sys
     )
 
+
 def init_driver(browser_type: str = "chrome", download_dir: str = None):
     """
     Initializes a web driver based on the browser type and configures download settings.
@@ -91,6 +92,7 @@ def init_driver(browser_type: str = "chrome", download_dir: str = None):
             sys_module=sys
         )
 
+
 def get_column_name_by_partial_name(df: pd.DataFrame, partial_name: str):
     """
     Finds and returns the first column name in the DataFrame that matches the given partial name.
@@ -124,6 +126,35 @@ def get_column_name_by_partial_name(df: pd.DataFrame, partial_name: str):
     
     return matching_column_name
 
+
+def float_to_int(df: pd.DataFrame):
+    """
+    Convert float64 columns to Int64 in a DataFrame.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame in which to convert columns.
+
+    Returns:
+    --------
+    pd.DataFrame
+        The DataFrame with float64 columns converted to Int64.
+    """
+    # Iterate over each column in the DataFrame
+    for column in df.columns:
+        # Check if the column's data type is float64
+        if df[column].dtype == 'float64':
+            # Convert the column to Int64 type
+            df[column] = df[column].astype('Int64')
     
+    return df
+
+
+
+
+
+
+
 
 
