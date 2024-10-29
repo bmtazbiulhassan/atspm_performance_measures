@@ -151,8 +151,89 @@ def float_to_int(df: pd.DataFrame):
     return df
 
 
+def get_single_unique_value(df: pd.DataFrame, column_name: str):
+    """
+    Fetches the unique value of a specified column in a DataFrame if there is only one unique value.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame containing the data.
+    column_name : str
+        The name of the column to check for a single unique value.
+        
+    Returns:
+    --------
+    The unique value of the column if there is only one unique value, otherwise None.
+    
+    Raises:
+    -------
+    KeyError
+        If the specified column does not exist in the DataFrame.
+    """
+    # Check if the specified column exists in the DataFrame
+    if column_name not in df.columns:
+        raise CustomException(
+            custom_message=f"Column '{column_name}' does not exist in the DataFrame.", sys_module=sys
+            )
+    
+    # Get the unique values in the specified column
+    unique_values = df[column_name].unique()
+    
+    try:
+        # Check if there is only one unique value in the column
+        if len(unique_values) == 1:
+            return unique_values[0]
+    except:
+        raise CustomException(
+            custom_message=f"Column '{column_name}' has more than one unique value.", sys_module=sys
+            )
 
 
+def create_dict(int_keys=None, str_keys=None, list_keys=None, dict_keys=None):
+    """
+    Creates a dictionary with specified keys and types of default values.
+
+    This function creates a dictionary where specified keys are initialized with default values based on their type:
+    - Integer keys are initialized to 0.
+    - List keys are initialized to empty lists.
+    - String keys are initialized to empty strings.
+    - Dictionary keys are initialized to empty dictionaries.
+
+    Parameters:
+    -----------
+    int_keys : list, optional
+        List of keys to be initialized with integer values (0). Defaults to an empty list if None.
+    str_keys : list, optional
+        List of keys to be initialized with empty string values (''). Defaults to an empty list if None.
+    list_keys : list, optional
+        List of keys to be initialized with empty list values ([]). Defaults to an empty list if None.
+    dict_keys : list, optional
+        List of keys to be initialized with empty dictionary values ({}). Defaults to an empty list if None.
+
+    Returns:
+    --------
+    dict
+        A dictionary with initialized keys and default values based on the specified types.
+
+    Example:
+    --------
+    >>> init_dict(int_keys=['count'], list_keys=['items'], str_keys=['name'], dict_keys=['info'])
+    {'count': 0, 'items': [], 'name': '', 'info': {}}
+    """
+    # Set default empty lists if parameters are None
+    int_keys = int_keys or []
+    str_keys = str_keys or []
+    list_keys = list_keys or []
+    dict_keys = dict_keys or []
+
+    # Creates the dictionary with specified types
+    default_dict = {key: 0 for key in int_keys}          # Integer keys with value 0
+    default_dict.update({key: "" for key in str_keys})   # String keys with empty strings
+    default_dict.update({key: [] for key in list_keys})  # List keys with empty lists
+    default_dict.update({key: {} for key in dict_keys})  # Dictionary keys with empty dictionaries
+
+    return default_dict
 
 
 

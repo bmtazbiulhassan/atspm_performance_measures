@@ -1,5 +1,4 @@
 import pandas as pd
-import yaml
 import tqdm
 import sys
 import os
@@ -13,28 +12,22 @@ from src.utils import get_root_directory, get_column_name_by_partial_name
 # Get the root directory of the project
 root_dir = get_root_directory()
 
-# Load the YAML configuration file (using absolute path)
-with open(os.path.join(root_dir, "config.yaml"), "r") as file:
-    config = yaml.safe_load(file)
-
-config = config["data_sorting"]
-
 
 class DataSort:
-    def __init__(self, relative_parent_import_dir: str, relative_export_dir: str):
+    def __init__(self, relative_event_import_parent_dir: str, relative_event_export_dir: str):
         """
         Initialize DataSort with directories for raw data and sorted output.
 
         Parameters:
         -----------
-        relative_parent_import_dir : str
-            Directory where sub-directories containing raw ATSPM event data CSV files are stored.
-        relative_export_dir : str
-            Directory for saving sorted data files by signal as pickle files.
+        relative_event_import_parent_dir : str
+            Relative directory path where sub-directories containing raw ATSPM event data CSV files are stored.
+        relative_event_export_dir : str
+            Relative directory path for saving sorted data files by signal as pickle files.
         """
-        self.relative_parent_import_dir = relative_parent_import_dir
-        self.relative_export_dir = relative_export_dir
-        self.absolute_export_dir = os.path.join(root_dir, self.relative_export_dir)
+        self.relative_event_import_parent_dir = relative_event_import_parent_dir
+        self.relative_event_export_dir = relative_event_export_dir
+        self.absolute_event_export_dir = os.path.join(root_dir, self.relative_event_export_dir)
 
     def export(self, df_event: pd.DataFrame, signal_id: str):
         """
@@ -65,7 +58,7 @@ class DataSort:
             df_event_id = df_event_id.sort_values(by=dict_column_names["time"]).reset_index(drop=True)
 
             # Define the export path for the signal data
-            event_filepath = os.path.join(self.absolute_export_dir, f"{signal_id}.pkl")
+            event_filepath = os.path.join(self.absolute_event_export_dir, f"{signal_id}.pkl")
 
             # Check if a sorted file already exists for this signal
             if os.path.exists(event_filepath):
@@ -105,14 +98,14 @@ class DataSort:
         """
         try:
             # Ensure the export directory exists
-            os.makedirs(self.absolute_export_dir, exist_ok=True)
+            os.makedirs(self.absolute_event_export_dir, exist_ok=True)
 
             # Define the path for daily data to process
-            absolute_import_dir = os.path.join(self.relative_parent_import_dir, f"{year}-{month:02d}")
-            event_filepath = os.path.join(root_dir, absolute_import_dir, f"atspm-{year}-{month}-{day}.csv")
+            absolute_event_import_dir = os.path.join(self.relative_event_import_parent_dir, f"{year}-{month:02d}")
+            event_filepath = os.path.join(root_dir, absolute_event_import_dir, f"atspm-{year}-{month}-{day}.csv")
 
             # Define the path for the check file that tracks sorted files
-            check_filepath = os.path.join(self.absolute_export_dir, "checker.csv")
+            check_filepath = os.path.join(self.absolute_event_export_dir, "checker.csv")
 
             # Initialize the check file if it doesn't exist
             if not os.path.exists(check_filepath):
@@ -135,31 +128,32 @@ class DataSort:
 
             # Get column names
             dict_column_names = {
-                "signalID": get_column_name_by_partial_name(df=df_event, partial_name="signalID")
+                "signal": get_column_name_by_partial_name(df=df_event, partial_name="signal")
                 }
 
             # Filter for the provided signal IDs
-            df_event = df_event[df_event[dict_column_names["signalID"]].isin(signal_ids)]
+            df_event = df_event[df_event[dict_column_names["signal"]].isin(signal_ids)]
 
             # Validate the presence of signal IDs
-            is_ok = "yes" if len(df_event[dict_column_names["signalID"]].unique()) > 1 else "no"
+            is_ok = "yes" if len(df_event[dict_column_names["signal"]].unique()) > 1 else "no"
             if is_ok == "no":
                 logging.info(f"File {event_filepath} contains no valid signal IDs")
-                raise CustomException(
-                    custom_message=f"No valid signal IDs in file {event_filepath}", sys_module=sys
-                    )
+                print(f"File {event_filepath} contains no valid signal IDs")
+                # raise CustomException(
+                #     custom_message=f"No valid signal IDs in file {event_filepath}", sys_module=sys
+                #     )
+            else:
+                # Process each unique signal ID
+                for signal_id in tqdm.tqdm(df_event[dict_column_names["signal"]].unique()):
+                    logging.info(f"Processing data for signal ID: {signal_id}")
+                    self.export(df_event, signal_id)
 
-            # Process each unique signal ID
-            for signal_id in tqdm.tqdm(df_event[dict_column_names["signalID"]].unique()):
-                logging.info(f"Processing data for signal ID: {signal_id}")
-                self.export(df_event, signal_id)
+                # Update the check file with the sorted file status
+                df_check = pd.concat([df_check, pd.DataFrame({"fileProc": [event_filepath], "isOk": [is_ok]})], ignore_index=True)
+                df_check.to_csv(check_filepath, index=False)
 
-            # Update the check file with the sorted file status
-            df_check = pd.concat([df_check, pd.DataFrame({"fileProc": [event_filepath], "isOk": [is_ok]})], ignore_index=True)
-            df_check.to_csv(check_filepath, index=False)
-
-            # Clear memory
-            gc.collect()
+                # Clear memory
+                gc.collect()
 
         except Exception as e:
             logging.error(f"Error in sorting for file {event_filepath}: {e}")

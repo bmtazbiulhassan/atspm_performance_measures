@@ -68,7 +68,7 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
 
         # Load configuration settings for tables and directories
         table_ids = config["noemi"]["table_ids"]
-        relative_export_parent_dir = config["noemi"]["relative_export_parent_dir"]
+        relative_report_export_parent_dir = config["noemi"]["relative_report_export_parent_dir"]
 
         # Open the report URL and wait for page to load
         driver.get(url)
@@ -85,20 +85,20 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
             if table_id and table_id in table_ids:
                 # Extract column headers and table rows
                 headers = [header.text.strip() for header in table_content.find('thead').find_all('th')]
-                report = [[cell.text.strip() for cell in row.find_all('td')] for row in table_content.find('tbody').find_all('tr')]
+                report_id = [[cell.text.strip() for cell in row.find_all('td')] for row in table_content.find('tbody').find_all('tr')]
 
                 # Create DataFrame with extracted headers
-                df_report = pd.DataFrame(data=report, columns=headers)
+                df_report_id = pd.DataFrame(data=report_id, columns=headers)
 
                 logging.info(f"Extracted data for table '{table_id}' from NOEMI report for SIIA ID: {siia_id}")
 
                 # Directory for saving table data as CSV
-                absolute_export_dir = os.path.join(root_dir, relative_export_parent_dir, table_id) # Absolute path
-                os.makedirs(absolute_export_dir, exist_ok=True)
+                absolute_report_export_dir = os.path.join(root_dir, relative_report_export_parent_dir, table_id) # Absolute path
+                os.makedirs(absolute_report_export_dir, exist_ok=True)
 
                 # Define the report file path and save the DataFrame
-                report_filepath = os.path.join(absolute_export_dir, f"{signal_id}.csv")
-                df_report.to_csv(report_filepath, index=False)
+                report_filepath = os.path.join(absolute_report_export_dir, f"{signal_id}.csv")
+                df_report_id.to_csv(report_filepath, index=False)
 
                 # Log the file saving operation and its path
                 logging.info(f"Saved NOEMI report data to {report_filepath}")
@@ -155,14 +155,14 @@ def scrape_event_data(day: int, month: int, year: int):
         )
 
     # Retrieve relative path to store event data and construct absolute download path
-    relative_export_parent_dir = config["sunstore"]["relative_export_parent_dir"]
-    absolute_export_dir = os.path.join(root_dir, relative_export_parent_dir, f"{year}-{month:02d}") # Absolute path
-    os.makedirs(absolute_export_dir, exist_ok=True)  # Create the directory if it doesn't exist
+    relative_event_export_parent_dir = config["sunstore"]["relative_event_export_parent_dir"]
+    absolute_event_export_dir = os.path.join(root_dir, relative_event_export_parent_dir, f"{year}-{month:02d}") # Absolute path
+    os.makedirs(absolute_event_export_dir, exist_ok=True)  # Create the directory if it doesn't exist
     
     driver = None
     # Initialize a browser driver for each browser type in sequence until successful
     for browser_type in browser_types:
-        driver = init_driver(browser_type=browser_type, download_dir=absolute_export_dir)
+        driver = init_driver(browser_type=browser_type, download_dir=absolute_event_export_dir)
         if driver:
             logging.info(f"{browser_type.capitalize()} driver initialized successfully.")
             break  # Continue with scraping if a driver is successfully initialized
@@ -274,7 +274,7 @@ def scrape_event_data(day: int, month: int, year: int):
                         time.sleep(wait_time)
                         
                         # Wait for the download to complete
-                        wait_for_download_completion(download_dir=absolute_export_dir)  
+                        wait_for_download_completion(download_dir=absolute_event_export_dir)  
 
                         logging.info("Download completed")
                         break  # Exit loop after clicking the download link
