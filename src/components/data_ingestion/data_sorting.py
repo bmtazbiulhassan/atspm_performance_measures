@@ -14,20 +14,20 @@ root_dir = get_root_directory()
 
 
 class DataSort:
-    def __init__(self, relative_event_import_parent_dir: str, relative_event_export_dir: str):
+    def __init__(self, relative_event_import_parent_dir: str, relative_event_export_parent_dir: str):
         """
         Initialize DataSort with directories for raw data and sorted output.
 
         Parameters:
         -----------
         relative_event_import_parent_dir : str
-            Relative directory path where sub-directories containing raw ATSPM event data CSV files are stored.
-        relative_event_export_dir : str
-            Relative directory path for saving sorted data files by signal as pickle files.
+            Relative directory path to sub-directories where raw ATSPM event data CSV files are stored.
+        relative_event_export_parent_dir : str
+            Relative directory path to sub-directories where sorted event data files will be saved as 
+            pickle and CSV files.
         """
         self.relative_event_import_parent_dir = relative_event_import_parent_dir
-        self.relative_event_export_dir = relative_event_export_dir
-        self.absolute_event_export_dir = os.path.join(root_dir, self.relative_event_export_dir)
+        self.relative_event_export_parent_dir = relative_event_export_parent_dir
 
     def export(self, df_event: pd.DataFrame, signal_id: str):
         """
@@ -42,32 +42,51 @@ class DataSort:
 
         Outputs:
         --------
-        None: Exports sorted data for each signal as a pickle file.
+        None: Exports sorted data for each signal as a pickle file and CSV files (for each date).
         """
         try:
-            # Filter data for the specified signal ID and reset the index
-            df_event_id = df_event[df_event.signalID.astype(str) == signal_id].reset_index(drop=True)
-
             # Get column names
             dict_column_names = {
-                "time": get_column_name_by_partial_name(df=df_event, partial_name="time")
+                "time": get_column_name_by_partial_name(df=df_event, partial_name="time"),
+                "signalID": get_column_name_by_partial_name(df=df_event, partial_name="signalID")
                 }
+            
+            # Filter data for the specified signal ID and reset the index
+            df_event_id = df_event[df_event[dict_column_names["signalID"]].astype(str) == signal_id].reset_index(drop=True)
 
             # Parse and sort timestamps
-            df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]], format="%m-%d-%Y %H:%M:%S.%f")
+            df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]], 
+                                                                    format="%m-%d-%Y %H:%M:%S.%f")
             df_event_id = df_event_id.sort_values(by=dict_column_names["time"]).reset_index(drop=True)
 
-            # Define the export path for the signal data
-            event_filepath = os.path.join(self.absolute_event_export_dir, f"{signal_id}.pkl")
+            self.absolute_event_export_dir = os.path.join(root_dir, self.relative_event_export_parent_dir)
+
+            # Absolute directory path for export the sorted event data files
+            absolute_event_export_dir = os.path.join(self.absolute_event_export_dir, signal_id)
 
             # Check if a sorted file already exists for this signal
-            if os.path.exists(event_filepath):
+            if os.path.exists(f"{absolute_event_export_dir}/{signal_id}.pkl"):
                 # Append existing data to the current data
-                df_event_id = pd.concat([df_event_id, pd.read_pickle(event_filepath)], ignore_index=True)
+                df_event_id = pd.concat([df_event_id, pd.read_pickle(f"{absolute_event_export_dir}/{signal_id}.pkl")], 
+                                        ignore_index=True)
                 df_event_id = df_event_id.drop_duplicates().sort_values(by=dict_column_names["time"]).reset_index(drop=True)
 
+            # Convert the timestamp column to datetime if it is not already
+            if not pd.api.types.is_datetime64_any_dtype(df_event[dict_column_names["time"]]):
+                df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]], 
+                                                                        format="%Y-%m-%d %H:%M:%S.%f")
+                
+            # Create a new 'date' column containing only the date part (no time)
+            df_event_id['date'] = df_event_id[dict_column_names["time"]].dt.date
+
+            # Save CSV files (for each date)
+            for date in df_event_id["date"].unique():
+                df_event_date = df_event_id[df_event_id["date"] == date].reset_index(drop=True)
+                df_event_date.to_csv(f"{absolute_event_export_dir}/{date.year}-{date.month:02d}-{date.day:02d}.csv", 
+                                     index=False)
+            
             # Save the data as a pickle file
-            df_event_id.to_pickle(event_filepath)
+            df_event_id.to_pickle(f"{absolute_event_export_dir}/{signal_id}.pkl")
 
         except Exception as e:
             logging.error(f"Error exporting data for signal ID {signal_id}: {e}")
@@ -75,7 +94,7 @@ class DataSort:
                 custom_message=f"Failed to export data for signal ID {signal_id}", sys_module=sys
                 )
 
-    def sort_and_export(self, signal_ids: list, day: int, month: int, year: int):
+    def sort_and_export(self, day: int, month: int, year: int, signal_ids: list):
         """
         Sort, and export ATSPM event data for each signal ID within a specific date.
 
@@ -84,17 +103,17 @@ class DataSort:
         signal_ids : list
             List of signal IDs to process. Each ID represents a unique intersection.
         day : int
-            Day of the desired date (1-31) for which ATSPM data is sorted.
+            Day of the date (1-31) for which ATSPM data is sorted.
         month : int
-            Month of the desired date (1-12) for which ATSPM data is sorted.
+            Month of the date (1-12) for which ATSPM data is sorted.
         year : int
-            Year of the desired date (e.g., 2024) for which ATSPM data is sorted.
+            Year of the date (e.g., 2024) for which ATSPM data is sorted.
 
         Outputs:
         --------
-        None: Exports sorted data for each signal ID as a pickle file, tracks sorted files in a checker file,
-        and logs each step of the process. If any error occurs during data sorting, or exporting, it raises a 
-        CustomException with details.
+        None: Exports sorted data for each signal ID as a pickle file and CSV files (for each date), tracks 
+        sorted files in a checker file, and logs each step of the process. If any error occurs during data 
+        sorting, or exporting, it raises a CustomException with details.
         """
         try:
             # Ensure the export directory exists

@@ -121,11 +121,11 @@ def scrape_event_data(day: int, month: int, year: int):
     Parameters:
     -----------
     day : int
-        Day of the desired date (1-31).
+        Day of the date (1-31).
     month : int
-        Month of the desired date (1-12).
+        Month of the date (1-12).
     year : int
-        Year of the desired date (e.g., 2024).
+        Year of the date (e.g., 2024).
         
     Returns:
     --------
@@ -301,7 +301,7 @@ def wait_for_download_completion(download_dir: str):
     Parameters:
     -----------
     download_dir : str
-        Directory where files are being downloaded.
+        Absolute directory path where files are being downloaded.
         
     Returns:
     --------

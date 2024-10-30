@@ -14,7 +14,7 @@ from src.components.feature_extraction.feature_extraction import CoreEventUtils
 root_dir = get_root_directory()
 
 # Load the YAML configuration file (using absolute path)
-with open(os.path.join(root_dir, 'config.yaml'), "r") as file:
+with open(os.path.join(root_dir, "config.yaml"), "r") as file:
     config = yaml.safe_load(file)
 
 config = config["data_quality_check"]
@@ -24,22 +24,22 @@ core_event_utils = CoreEventUtils()
 
 
 class DataQualityCheck:
-    def __init__(self, relative_event_import_dir: str, relative_config_import_dir: str, relative_check_export_parent_dir: str, check_event_sequence_of: str):
+    def __init__(self, relative_event_import_parent_dir: str, relative_config_import_dir: str, relative_check_export_parent_dir: str, check_event_sequence_of: str):
         """
         Initialize the class with paths to event data, configuration data, and export directory.
 
         Parameters:
         -----------
-        relative_event_import_dir : str
-            Directory containing ATSPM event data.
+        relative_event_import_parent_dir : str
+            Relative directory path containing sub-directories where ATSPM event data CSV files are stored.
         relative_config_import_dir : str
-            Directory containing signal configuration data.
+            Relative directory path containing signal configuration data.
         relative_check_export_parent_dir : str
-            Directory for saving data quality check results.
+            Relative directory path to sub-directories for saving data quality check results.
         check_event_sequence_of : str
-            Type of event sequence to check ('signal' or 'vehicle').
+            Type of event sequence to check ('vehicle_signal' or 'vehicle_traffic').
         """
-        self.relative_event_import_dir = relative_event_import_dir
+        self.relative_event_import_parent_dir = relative_event_import_parent_dir
         self.relative_config_import_dir = relative_config_import_dir
         self.relative_check_export_parent_dir = relative_check_export_parent_dir
         self.check_event_sequence_of = check_event_sequence_of
@@ -51,20 +51,20 @@ class DataQualityCheck:
         Parameters:
         -----------
         day : int
-            Day to filter data by.
+            Day of the date (1-31) to filter data by.
         month : int
-            Month to filter data by.
+            Month of the date (1-12) fto filter data by.
         year : int
-            Year to filter data by.
+            Year of the date (e.g., 2024) to filter data by.
         signal_ids : list, optional
             List of specific signal IDs to process; processes all if empty.
         """
         try:
-            absolute_event_import_dir = os.path.join(root_dir, self.relative_event_import_dir)
-            event_filepaths = glob.glob(os.path.join(absolute_event_import_dir, "*.csv"))
+            absolute_event_import_parent_dir = os.path.join(root_dir, self.relative_event_import_parent_dir)
+            absolute_event_import_dirs = glob.glob(os.path.join(absolute_event_import_parent_dir, "*"))
 
-            for event_filepath in event_filepaths:
-                signal_id = os.path.splitext(os.path.basename(event_filepath))[0]
+            for absolute_event_import_dir in absolute_event_import_dirs:
+                signal_id = os.path.basename(absolute_event_import_dir)
                 if signal_ids and (signal_id not in signal_ids):
                     continue
 
@@ -72,7 +72,7 @@ class DataQualityCheck:
                 config_filepath = os.path.join(root_dir, self.relative_config_import_dir, f"{signal_id}.csv")
                 try:
                     df_config_id = pd.read_csv(config_filepath)
-                    df_event_id = pd.read_csv(event_filepath)
+                    df_event_id = pd.read_csv(f"{absolute_event_import_dir}/{year}-{month:02d}-{day:02d}.csv")
                 except FileNotFoundError as e:
                     logging.error(f"File not found: {e}")
                     raise CustomException(custom_message=f"File not found: {e}", sys_module=sys)
@@ -88,6 +88,7 @@ class DataQualityCheck:
                 dict_column_names = {
                     "param": get_column_name_by_partial_name(df=df_event_id, partial_name="param"),
                     "code": get_column_name_by_partial_name(df=df_event_id, partial_name="code"),
+
                     "intersectionType": get_column_name_by_partial_name(df=df_config_id, partial_name="intersection"),
                     "district": get_column_name_by_partial_name(df=df_config_id, partial_name="district"),
                     "county": get_column_name_by_partial_name(df=df_config_id, partial_name="county")
@@ -107,7 +108,7 @@ class DataQualityCheck:
                 else:
                     logging.error(f"{self.check_event_sequence_of} is not valid.")
                     raise CustomException(
-                        custom_message=f"{self.check_event_sequence_of} is not valid. Must be 'signal' or 'vehicle'.", 
+                        custom_message=f"{self.check_event_sequence_of} is not valid. Must be 'vehicle_signal' or 'vehicle_traffic'.", 
                         sys_module=sys
                         )
                 
@@ -119,6 +120,7 @@ class DataQualityCheck:
 
                 # Update dictionary with error and correct sequence counts and percentages
                 total_sequences = error_sequence_counter + correct_sequence_counter
+
                 dict_quality_check_id['errorSequenceCount'] = error_sequence_counter
                 dict_quality_check_id['correctSequenceCount'] = correct_sequence_counter
                 dict_quality_check_id['errorSequencePercent'] = (error_sequence_counter / (total_sequences + 1)) * 100
@@ -128,7 +130,7 @@ class DataQualityCheck:
                 df_quality_check_id = pd.DataFrame(dict_quality_check_id)
 
                 # Add signal ID and unique parameters to DataFrame
-                column_suffix = "phaseNo" if self.check_event_sequence_of == "signal" else "channelNo"
+                column_suffix = "phaseNo" if self.check_event_sequence_of == "vehicle_signal" else "channelNo"
                 df_quality_check_id[column_suffix] = unique_params
 
                 # Add additional attributes from configuration data
@@ -211,17 +213,16 @@ class DataQualityCheck:
         try:
             # Dynamically fetch column names
             dict_column_names = {
-                "code": get_column_name_by_partial_name(df=df_event, partial_name="code"),
-                "sequence": get_column_name_by_partial_name(df=df_event, partial_name="sequence")
+                "code": get_column_name_by_partial_name(df=df_event, partial_name="code")
             }
             
             # Initialize counters for correct and incorrect sequences
             error_sequence_counter, correct_sequence_counter = 0, 0
-            sequence_ids = df_event[dict_column_names["sequence"]].unique()
+            sequence_ids = df_event["sequenceID"].unique()
 
             for sequence_id in sequence_ids:
                 # Extract event codes for the current sequence
-                current_sequence = df_event[df_event[dict_column_names["sequence"]] == sequence_id][dict_column_names["code"]].tolist()
+                current_sequence = df_event[df_event["sequenceID"] == sequence_id][dict_column_names["code"]].tolist()
                 
                 # Compare the current sequence with the valid sequence
                 if current_sequence == valid_event_sequence:
