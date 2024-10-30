@@ -79,9 +79,9 @@ data_sorting:
     # Each sub-directory represents data from a specific date (formatted as "year-month-day").
     relative_event_import_parent_dir: "data/raw/atspm/fdot_d5/event_data"
 
-    # Relative path for exporting the sorted and processed ATSPM data by signal.
-    # Each signal's data is saved as a pickle file, organized in a structure that makes it easy to access and use.
-    relative_event_export_dir: "data/interim/atspm/fdot_d5/event_data"
+    # Relative path the directory containing sub-directories for exporting the sorted and processed ATSPM data by signal ID and date.
+    # Each signal's data is saved as a pickle file and csv files (for each date), organized in a structure that makes it easy to access and use.
+    relative_event_export_parent_dir: "data/interim/atspm/fdot_d5/event_data"
 
 # ---------------------------------
 # Data Pre-processing Configuration
@@ -127,11 +127,11 @@ data_preprocessing:
 # This file contains configurations for various feature extraction processes, 
 # including data quality check, and feature extraction.
 
-# -----------------------------------
+# --------------------------------
 # Data Quality Check Configuration
-# -----------------------------------
+# --------------------------------
 # This section contains settings for validating the quality of ATSPM event data
-# from the Sunstore portal and pre-processed NOEMI reports.
+# from Sunstore and pre-processed NOEMI reports.
 
 data_quality_check:
 
@@ -143,27 +143,27 @@ data_quality_check:
   sunstore:
     # Define valid sequences for different types of event codes in ATSPM data.
     # These sequences help verify if event codes in the data match expected patterns.
-    valid_event_sequences:
+    valid_event_sequence:
       
-      # Expected event sequence for signal-related data checks
-      signal:
+      # Expected event sequence for vehicle signal-related data checks
+      vehicle_signal:
         - 1
         - 8
         - 10
         - 11
 
-      # Expected event sequence for vehicle-related data checks
-      vehicle:
+      # Expected event sequence for vehicle traffic-related data checks
+      vehicle_traffic:
         - 82
         - 81
 
-    # Relative directory path for importing ATSPM event data to be checked for quality.
-    # Data within this directory should already be organized by date and prepared for analysis.
-    relative_event_import_dir: "data/interim/atspm/fdot_d5/event_data"
+    # Relative directory path to sub-directories for importing ATSPM event data to be checked for quality.
+    # Data within this sub-directories should be available by date and prepared for analysis.
+    relative_event_import_parent_dir: "data/interim/atspm/fdot_d5/event_data"
 
-    # Relative directory path to export data quality check results.
-    # The results will be stored by event type and date in subdirectories.
-    relative_event_export_parent_dir: "data/proc/atspm/fdot_d5/data_quality_check"
+    # Relative directory path to sub-directories where data quality check results will be exported.
+    # The results will be stored per signal in subdirectories.
+    relative_check_export_parent_dir: "data/proc/atspm/fdot_d5/data_quality_check"
 
   # NOEMI Reports Quality Check Configuration
   # ----------------------------------------
@@ -176,9 +176,75 @@ data_quality_check:
     relative_config_import_dir: "data/interim/atspm/fdot_d5/signal_config"
 
 
+# ---------------------------
+# Feature Extraction Settings
+# ---------------------------
+# This section defines configurations for extracting specific features from ATSPM event data, 
+# including expected event sequences and directory paths. The settings support validation, 
+# sequence assignment, and feature profiling of vehicle, pedestrian, and traffic-related signals.
 
+feature_extraction:
 
+  # Sunstore Feature Extraction Configuration
+  # ----------------------------------------
+  # Configuration settings for extracting features and processing event sequences
+  # from ATSPM event data retrieved from the Sunstore.
 
+  sunstore:
+    # Define valid sequences for various event types, which assist in validating
+    # and extracting sequential events in the data for accurate feature profiling.
+    valid_event_sequence:
+      
+      # Expected event sequence for vehicle signal-related feature extraction
+      vehicle_signal:
+        - 1
+        - 8
+        - 10
+        - 11
+    
+      # Expected event sequence for pedestrian signal-related feature extraction
+      pedestrian_signal:
+        - 21
+        - 22
+        - 23
+
+      # Expected event sequence for vehicle traffic-related feature extraction
+      vehicle_traffic:
+        - 82
+        - 81
+
+    # Relative path to the directory containing sub-directories with raw ATSPM event data.
+    # Data should be organized by signal ID and date for processing and feature extraction.
+    relative_event_import_parent_dir : "data/interim/atspm/fdot_d5/event_data"
+            
+    # Relative path to the directory where the extracted signal profiles (e.g., phase and cycle data)
+    # will be saved, organized for easy access and further analysis.
+    relative_signal_export_parent_dir : "data/proc/atspm/fdot_d5/feature_extraction/signal"
+        
+
+  # NOEMI Signal Configuration for Feature Extraction
+  # ------------------------------------------------
+  # Configuration settings for mapping signal phase numbers to barrier numbers 
+  # based on signal configuration data, facilitating feature extraction.
+
+  noemi:
+    # Barrier map for assigning barrier numbers to phase numbers in configuration data.
+    # This mapping aids in categorizing and profiling signal configurations during extraction.
+    barrier_map:
+      1: 2
+      6: 2 
+      2: 2
+      5: 2
+      3: 1
+      8: 1
+      4: 1
+      7: 1
+
+    # Relative path to the directory containing NOEMI configuration data,
+    # which supports cross-referencing ATSPM event data with the associated signal configurations.
+    relative_config_import_dir : "data/interim/atspm/fdot_d5/signal_config"
+
+            
 
 
 
