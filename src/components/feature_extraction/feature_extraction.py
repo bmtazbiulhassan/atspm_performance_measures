@@ -362,8 +362,8 @@ class TrafficSignalProfile(CoreEventUtils):
             # Create a pseudo timestamp for sorting
             time_columns = [column for column in df_phase_profile_id.columns if column.endswith("Begin") or column.endswith("End")]
             df_phase_profile_id["pseudoTimestamp"] = df_phase_profile_id[time_columns].bfill(axis=1).iloc[:, 0]
-            df_phase_profile_id = df_phase_profile_id.sort_values(by="pseudoTimestamp").reset_index(drop=True)
-            df_phase_profile_id.drop(columns=["pseudoTimestamp"], inplace=True)
+            df_phase_profile_id = df_phase_profile_id.sort_values(by="pseudoTimeStamp").reset_index(drop=True)
+            df_phase_profile_id.drop(columns=["pseudoTimeStamp"], inplace=True)
 
             # Add date information
             df_phase_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
@@ -468,12 +468,12 @@ class TrafficSignalProfile(CoreEventUtils):
             DataFrame containing the vehicle cycle profile.
         """
         try:
-            # Define the file path for the phase data of the specified signal and date
+            # Define the file path for the vehicle phase data of the specified signal and date
             profile_filepath = os.path.join(
                 root_dir, self.relative_signal_export_parent_dir, "phase", "vehicle", signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
             )
 
-            # Load phase profile data or extract it if file does not exist
+            # Load vehicle phase profile data or extract it if file does not exist
             if os.path.exists(profile_filepath):
                 df_vehicle_phase_profile_id = pd.read_csv(profile_filepath)
             else:
@@ -521,7 +521,7 @@ class TrafficSignalProfile(CoreEventUtils):
                         signal_time_type: [] for signal_time_type in ["green", "yellow", "redClearance", "red"]
                     }
 
-                    # Collect start and end times for green, yellow, and redClearance for each phase occurrence
+                    # Collect start and end times for green, yellow, and redClearance for each phase 
                     for idx in range(df_vehicle_phase_profile_phase.shape[0]):
                         dict_signal_times["green"].append((df_vehicle_phase_profile_phase.loc[idx, "greenBegin"], df_vehicle_phase_profile_phase.loc[idx, "greenEnd"]))
                         dict_signal_times["yellow"].append((df_vehicle_phase_profile_phase.loc[idx, "yellowBegin"], df_vehicle_phase_profile_phase.loc[idx, "yellowEnd"]))
@@ -547,6 +547,7 @@ class TrafficSignalProfile(CoreEventUtils):
 
             # Sort cycle profiles and drop incomplete first and last cycles
             df_vehicle_cycle_profile_id = df_vehicle_cycle_profile_id.sort_values(by=["cycleNo"]).iloc[1:-1].reset_index(drop=True)
+            
             # Add date information to the DataFrame
             df_vehicle_cycle_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
@@ -554,7 +555,7 @@ class TrafficSignalProfile(CoreEventUtils):
             absolute_signal_export_dir = os.path.join(root_dir, self.relative_signal_export_parent_dir, "cycle", "vehicle", signal_id)
             os.makedirs(absolute_signal_export_dir, exist_ok=True)
             profile_filepath = f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv"
-            
+
             df_vehicle_cycle_profile_id.to_csv(profile_filepath, index=False)
 
             return df_vehicle_cycle_profile_id
@@ -562,9 +563,85 @@ class TrafficSignalProfile(CoreEventUtils):
         except Exception as e:
             logging.error(f"Error extracting vehicle cycle profile for signal ID {signal_id}: {e}")
             raise CustomException(custom_message=f"Error extracting vehicle cycle profile for signal ID {signal_id}: {e}", sys_module=sys)
-        
-        
 
+    def extract_pedestrian_cycle_profile(self, signal_id: str):
+        """
+        Extracts the pedestrian cycle profile for a specified signal ID and date.
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the signal.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing the pedestrian cycle profile data.
+        """
+        try:
+            # Define the file path for the pedestrian phase data of the specified signal and date
+            profile_filepath = os.path.join(
+                root_dir, self.relative_signal_export_parent_dir, "phase", "pedestrian", signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
+            )
+
+            # Load pedestrian phase profile data if it exists, otherwise extract it
+            if os.path.exists(profile_filepath):
+                df_pedestrian_phase_profile_id = pd.read_csv(profile_filepath)
+            else:
+                df_pedestrian_phase_profile_id = self.extract_pedestrian_cycle_profile(signal_id=signal_id)
+
+            # Define the file path for the vehicle cycle data of the specified signal and date
+            profile_filepath = os.path.join(
+                root_dir, self.relative_signal_export_parent_dir, "cycle", "pedestrian", signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
+            )
+
+            # Load vehicle cycle profile data if it exists, otherwise extract it
+            if os.path.exists(profile_filepath):
+                df_vehicle_cycle_profile_id = pd.read_csv(profile_filepath)
+            else:
+                df_vehicle_cycle_profile_id = self.extract_vehicle_cycle_profile(signal_id=signal_id)
+
+            # Keep only rows with a correct pedestrian event sequence (21, 22, 23)
+            df_pedestrian_phase_profile_id = df_pedestrian_phase_profile_id[df_pedestrian_phase_profile_id["correctSequenceFlag"] == 1]
+            df_pedestrian_phase_profile_id = df_pedestrian_phase_profile_id.reset_index(drop=True)
+
+            # Perform an 'asof' merge to associate each pedestrian walk start with the closest vehicle cycle start
+            df_pedestrian_cycle_profile_id = pd.merge_asof(
+                df_pedestrian_phase_profile_id, df_vehicle_cycle_profile_id[["cycleNo", "cycleBegin", "cycleEnd"]], 
+                left_on="pedestrianWalkBegin", 
+                right_on="cycleBegin", 
+                direction="backward"
+            )
+
+            # Filter to keep only rows where pedestrianWalkBegin falls within the cycle interval (between cycleBegin and cycleEnd)
+            df_pedestrian_cycle_profile_id = df_pedestrian_cycle_profile_id[
+                (df_pedestrian_cycle_profile_id["pedestrianWalkBegin"] >= df_pedestrian_cycle_profile_id["cycleBegin"]) &
+                (df_pedestrian_cycle_profile_id["pedestrianWalkBegin"] <= df_pedestrian_cycle_profile_id["cycleEnd"])
+            ]
+
+            # Sort the resulting DataFrame by cycle number and phase number
+            df_pedestrian_cycle_profile_id = df_pedestrian_cycle_profile_id.sort_values(by=["cycleNo", "phaseNo"]).reset_index(drop=True)
+
+            # Add date information to the DataFrame
+            df_pedestrian_cycle_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+
+            # Define export directory for the pedestrian cycle profile data and ensure it exists
+            absolute_signal_export_dir = os.path.join(root_dir, self.relative_signal_export_parent_dir, "cycle", "pedestrian", signal_id)
+            os.makedirs(absolute_signal_export_dir, exist_ok=True)
+
+            # Save the DataFrame to a CSV file in the defined export directory
+            profile_filepath = f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv"
+            df_pedestrian_cycle_profile_id.to_csv(profile_filepath, index=False)
+
+            return df_pedestrian_cycle_profile_id
+
+        except Exception as e:
+            # Log and raise an exception if any error occurs during processing
+            logging.error(f"Error extracting pedestrian cycle profile for signal ID {signal_id}: {e}")
+            raise CustomException(
+                custom_message=f"Error extracting pedestrian cycle profile for signal ID {signal_id}: {e}",
+                sys_module=sys
+            )
 
 
 

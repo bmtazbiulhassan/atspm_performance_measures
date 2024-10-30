@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 import pandas as pd
@@ -235,7 +236,92 @@ def create_dict(int_keys=None, str_keys=None, list_keys=None, dict_keys=None):
 
     return default_dict
 
+def load_data(base_dir: str, filename: str, file_type: str = "csv", sub_dirs: list = None):
+    """
+    Loads a DataFrame from a specified directory and file type.
 
+    Parameters:
+    -----------
+    base_dir : str
+        The base directory where the data is stored.
+    filename : str
+        The name of the file (without extension) to load.
+    file_type : str, optional
+        The type of file to load ("csv" or "pkl" for pickle). Default is "csv".
+    sub_dirs : list, optional
+        List of subdirectories within the base directory to navigate to the file.
+
+    Returns:
+    --------
+    pd.DataFrame
+        The loaded DataFrame.
+
+    Raises:
+    -------
+    CustomException
+        If the specified file does not exist or an unsupported file type is provided.
+    """
+    try:
+        # Construct the full file path
+        file_dir = os.path.join(base_dir, *sub_dirs) if sub_dirs else base_dir
+        filepath = os.path.join(file_dir, f"{filename}.{file_type}")
+
+        # Check if the file exists
+        if not os.path.exists(filepath):
+            raise CustomException(f"File not found: {filepath}")
+
+        # Load the file based on the file type
+        if file_type == "csv":
+            df = pd.read_csv(filepath)
+        elif file_type == "pkl":
+            df = pd.read_pickle(filepath)
+        else:
+            raise CustomException(f"Unsupported file type: {file_type}. Choose 'csv' or 'pkl'.")
+        
+        return df
+
+    except Exception as e:
+        raise CustomException(f"Unexpected error while loading data: {str(e)}", sys_module=sys)
+
+
+def export_data(df: pd.DataFrame, base_dir: str, filename: str, file_type: str = "csv", sub_dirs: list = None):
+    """
+    Exports a DataFrame to a specified directory and file type.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame to export.
+    base_dir : str
+        The base directory where the data should be saved.
+    filename : str
+        The name of the file (without extension) for the exported data.
+    file_type : str, optional
+        The type of file to save ("csv" or "pkl" for pickle). Default is "csv".
+    sub_dirs : list, optional
+        List of subdirectories within the base directory to save the file.
+
+    Raises:
+    -------
+    CustomException
+        If an unsupported file type is provided or any error occurs during export.
+    """
+    try:
+        # Construct the full file path and create subdirectories if needed
+        file_dir = os.path.join(base_dir, *sub_dirs) if sub_dirs else base_dir
+        os.makedirs(file_dir, exist_ok=True)
+        filepath = os.path.join(file_dir, f"{filename}.{file_type}")
+
+        # Export the data based on the file type
+        if file_type == "csv":
+            df.to_csv(filepath, index=False)
+        elif file_type == "pkl":
+            df.to_pickle(filepath)
+        else:
+            raise CustomException(f"Unsupported file type: {file_type}. Choose 'csv' or 'pkl'.")
+
+    except Exception as e:
+        raise CustomException(f"Unexpected error while exporting data: {str(e)}", sys_module=sys)
 
 
 

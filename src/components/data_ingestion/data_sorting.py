@@ -59,10 +59,11 @@ class DataSort:
                                                                     format="%m-%d-%Y %H:%M:%S.%f")
             df_event_id = df_event_id.sort_values(by=dict_column_names["time"]).reset_index(drop=True)
 
-            self.absolute_event_export_dir = os.path.join(root_dir, self.relative_event_export_parent_dir)
-
             # Absolute directory path for export the sorted event data files
-            absolute_event_export_dir = os.path.join(self.absolute_event_export_dir, signal_id)
+            absolute_event_export_dir = os.path.join(root_dir, self.relative_event_export_parent_dir, signal_id)
+
+            # Ensure the export directory exists
+            os.makedirs(absolute_event_export_dir, exist_ok=True)
 
             # Check if a sorted file already exists for this signal
             if os.path.exists(f"{absolute_event_export_dir}/{signal_id}.pkl"):
@@ -116,15 +117,17 @@ class DataSort:
         sorting, or exporting, it raises a CustomException with details.
         """
         try:
+            absolute_event_export_parent_dir = os.path.join(root_dir, self.relative_event_export_parent_dir)
+
             # Ensure the export directory exists
-            os.makedirs(self.absolute_event_export_dir, exist_ok=True)
+            os.makedirs(absolute_event_export_parent_dir, exist_ok=True)
 
             # Define the path for daily data to process
             absolute_event_import_dir = os.path.join(self.relative_event_import_parent_dir, f"{year}-{month:02d}")
             event_filepath = os.path.join(root_dir, absolute_event_import_dir, f"atspm-{year}-{month}-{day}.csv")
 
             # Define the path for the check file that tracks sorted files
-            check_filepath = os.path.join(self.absolute_event_export_dir, "checker.csv")
+            check_filepath = os.path.join(absolute_event_export_parent_dir, "checker.csv")
 
             # Initialize the check file if it doesn't exist
             if not os.path.exists(check_filepath):
