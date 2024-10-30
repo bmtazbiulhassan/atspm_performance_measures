@@ -29,7 +29,7 @@ class CoreEventUtils:
         df_event : pd.DataFrame
             DataFrame containing raw ATSPM event data.
         event_sequence : list
-            Sequence of event codes to filter (e.g., [1, 8, 10, 11] or [82, 81]).
+            Sequence of event codes to filter (e.g., [1, 8, 10, 11], [21, 22, 23], [82, 81], etc.).
 
         Returns:
         --------
@@ -201,7 +201,7 @@ class TrafficSignalProfile(CoreEventUtils):
         relative_config_import_dir : str
             Relative path to directory where configuration data for signals is stored.
         relative_signal_export_parent_dir : str
-            Relative path to directory which contains sub-directories (which further contains sub-directors) 
+            Relative path to directory which contains sub-directories, which further contains sub-directors, 
             where extracted signal profile for phase and cycle will be saved.
         day : int
             Day of the desired date (1-31).
@@ -244,7 +244,7 @@ class TrafficSignalProfile(CoreEventUtils):
         # Check if phase numbers in configuration data have corresponding entries in barrier map
         if all(phase_no not in config["noemi"]["barrier_map"].keys() for phase_no in phase_nos):
             raise CustomException(
-                custom_message=f"Barrier map {config['noemi']['barrier_map']} is not valid for signal ID {signal_id}", 
+                custom_message=f"Barrier map {config["noemi"]["barrier_map"]} is not valid for signal ID {signal_id}", 
                 sys_module=sys
             )
 
@@ -331,7 +331,7 @@ class TrafficSignalProfile(CoreEventUtils):
                                                         event_sequence=valid_event_sequence)
 
             # Initialize an empty list to store phase profiles
-            phase_profile = []
+            phase_profile_id = []
             for phase_no in sorted(df_event_id[dict_column_names["param"]].unique()):
                 # Filter data for each phase number and assign sequence IDs
                 df_event_phase = df_event_id[df_event_id[dict_column_names["param"]] == phase_no]
@@ -343,7 +343,7 @@ class TrafficSignalProfile(CoreEventUtils):
                     correct_flag = int(current_event_sequence == valid_event_sequence)
 
                     # Generate phase information dictionary, dynamically adding timestamps for each event
-                    phase_info = {
+                    dict_phase_profile_id = {
                         "signalID": signal_id,
                         "phaseNo": phase_no,
                         "correctSequenceFlag": correct_flag,
@@ -352,26 +352,31 @@ class TrafficSignalProfile(CoreEventUtils):
                     }
                     # Conditionally add "barrierNo" if the signal type is "vehicle"
                     if signal_type == "vehicle":
-                        phase_info["barrierNo"] = config["noemi"]["barrier_map"].get(int(phase_no), 0)
+                        dict_phase_profile_id["barrierNo"] = config["noemi"]["barrier_map"].get(int(phase_no), 0)
 
-                    phase_profile.append(phase_info)
+                    phase_profile_id.append(dict_phase_profile_id)
 
-            # Convert phase profile to DataFrame and create a pseudo timestamp for sorting
-            df_phase_profile = pd.DataFrame(phase_profile)
-            time_columns = [column for column in df_phase_profile.columns if column.endswith("Begin") or column.endswith("End")]
-            df_phase_profile["pseudoTimestamp"] = df_phase_profile[time_columns].bfill(axis=1).iloc[:, 0]
-            df_phase_profile = df_phase_profile.sort_values(by="pseudoTimestamp").reset_index(drop=True)
-            df_phase_profile.drop(columns=["pseudoTimestamp"], inplace=True)
+            # Convert phase profile to DataFrame 
+            df_phase_profile_id = pd.DataFrame(phase_profile_id)
+
+            # Create a pseudo timestamp for sorting
+            time_columns = [column for column in df_phase_profile_id.columns if column.endswith("Begin") or column.endswith("End")]
+            df_phase_profile_id["pseudoTimestamp"] = df_phase_profile_id[time_columns].bfill(axis=1).iloc[:, 0]
+            df_phase_profile_id = df_phase_profile_id.sort_values(by="pseudoTimestamp").reset_index(drop=True)
+            df_phase_profile_id.drop(columns=["pseudoTimestamp"], inplace=True)
+
+            # Add date information
+            df_phase_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
             # Export phase data to appropriate directory based on signal type
             absolute_signal_export_dir = os.path.join(
-                root_dir, self.relative_signal_export_parent_dir, signal_type, signal_id,
+                root_dir, self.relative_signal_export_parent_dir, "phase", signal_type, signal_id,
                 )
             os.makedirs(absolute_signal_export_dir, exist_ok=True)
-            df_phase_profile.to_csv(f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv", 
-                                    index=False)
+            profile_filepath = f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv"
+            df_phase_profile_id.to_csv(profile_filepath, index=False)
 
-            return df_phase_profile
+            return df_phase_profile_id
 
         except Exception as e:
             logging.error(f"Error extracting phase profile for signal ID {signal_id}: {e}")
@@ -380,7 +385,7 @@ class TrafficSignalProfile(CoreEventUtils):
                 sys_module=sys
                 )
 
-    def extract_vehicle_phase(self, signal_id: str):
+    def extract_vehicle_phase_profile(self, signal_id: str):
         """
         Extract vehicle phase data for a specific signal.
 
@@ -396,7 +401,7 @@ class TrafficSignalProfile(CoreEventUtils):
         """
         return self.extract_phase_profile(signal_id, signal_type="vehicle")
 
-    def extract_pedestrian_phase(self, signal_id: str):
+    def extract_pedestrian_phase_profile(self, signal_id: str):
         """
         Extract pedestrian phase data for a specific signal.
 
@@ -412,8 +417,153 @@ class TrafficSignalProfile(CoreEventUtils):
         """
         return self.extract_phase_profile(signal_id, signal_type="pedestrian")
 
+    def assign_cycle_nos(self, df_vehicle_phase_profile: pd.DataFrame, start_barrier_no: int = 1):
+        """
+        Dynamically assign unique cycle numbers to DataFrame based on specified barrier value.
 
+        Parameters:
+        -----------
+        df_vehicle_phase_profile : pd.DataFrame
+            DataFrame containing extracted vehicle phase profile data.
+        start_barrier_no : int, optional
+            Barrier number that initiates a new cycle. Default is 1. (Must be either 1 or 2)
 
+        Returns:
+        --------
+        pd.DataFrame
+            The input DataFrame with an added 'cycleNo' column.
+        """
+        try:
+            cycle_no = 0  # Initialize cycle counter
+            cycle_nos = []  # List to store cycle numbers for each row
+
+            for idx, row in df_vehicle_phase_profile.iterrows():
+                current_barrier_no = row["barrierNo"]
+                # Increment cycle number when the start barrier is encountered and is not consecutive
+                if (current_barrier_no == start_barrier_no) and (idx == 0 or df_vehicle_phase_profile.loc[idx - 1, "barrierNo"] != start_barrier_no):
+                    cycle_no += 1
+                cycle_nos.append(cycle_no)  # Append current cycle number
+
+            df_vehicle_phase_profile["cycleNo"] = cycle_nos  # Add cycle numbers to DataFrame
+            return df_vehicle_phase_profile
+
+        except Exception as e:
+            logging.error("Error assigning cycle numbers")
+            raise CustomException(custom_message=f"Error assigning cycle numbers: {e}", sys_module=sys)
+
+    def extract_vehicle_cycle_profile(self, signal_id: str, start_barrier_no: int = 1):
+        """
+        Extracts the vehicle cycle profile for a given signal ID with dynamic handling for different signal types.
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the signal.
+        start_barrier_no : int, optional
+            Barrier number to start a new cycle. Default is 1. (Must be either 1 or 2)
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing the vehicle cycle profile.
+        """
+        try:
+            # Define the file path for the phase data of the specified signal and date
+            profile_filepath = os.path.join(
+                root_dir, self.relative_signal_export_parent_dir, "phase", "vehicle", signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
+            )
+
+            # Load phase profile data or extract it if file does not exist
+            if os.path.exists(profile_filepath):
+                df_vehicle_phase_profile_id = pd.read_csv(profile_filepath)
+            else:
+                df_vehicle_phase_profile_id = self.extract_vehicle_phase_profile(signal_id=signal_id)
+
+            # Assign cycle numbers to the phase profile based on the specified start barrier
+            df_vehicle_phase_profile_id = self.assign_cycle_nos(df_vehicle_phase_profile=df_vehicle_phase_profile_id, start_barrier_no=start_barrier_no)
+            cycle_nos = sorted(df_vehicle_phase_profile_id["cycleNo"].unique())  # Get sorted unique cycle numbers
+
+            df_vehicle_cycle_profile_id = pd.DataFrame()  # Initialize DataFrame for cycle profiles
+
+            # Process each cycle number to collect phase and cycle times
+            for cycle_no in cycle_nos:
+                # Filter data for the current cycle and reset index
+                df_vehicle_phase_profile_cycle = df_vehicle_phase_profile_id[df_vehicle_phase_profile_id["cycleNo"] == cycle_no].reset_index(drop=True)
+                
+                # Skip the cycle if it has incorrect sequence flags
+                if 0 in df_vehicle_phase_profile_cycle["correctSequenceFlag"].unique():
+                    continue
+                
+                cycle_begin = df_vehicle_phase_profile_cycle.iloc[0]["greenBegin"]
+                cycle_end = df_vehicle_phase_profile_cycle.iloc[-1]["redClearanceEnd"]
+                # Initialize dictionary to store cycle information for the current cycle
+                dict_vehicle_cycle_profile_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end
+                }
+                # Calculate cycle length based on cycle start and end times
+                dict_vehicle_cycle_profile_id["cycleLength"] = abs((dict_vehicle_cycle_profile_id["cycleEnd"] - dict_vehicle_cycle_profile_id["cycleBegin"]).total_seconds())
+
+                # Process each unique phase number in the current cycle
+                for phase_no in sorted(df_vehicle_phase_profile_cycle["phaseNo"].unique()):
+                    # Filter data for the current phase
+                    df_vehicle_phase_profile_phase = df_vehicle_phase_profile_cycle[df_vehicle_phase_profile_cycle["phaseNo"] == phase_no]
+
+                    # Initialize phase time columns with NaT for the current phase
+                    dict_vehicle_cycle_profile_id.update(
+                        {f"{signal_time_type}Phase{phase_no}": [pd.NaT] for signal_time_type in ["green", "yellow", "redClearance", "red"]}
+                    )
+
+                    # Initialize dictionary to store signal times for each phase
+                    dict_signal_times = {
+                        signal_time_type: [] for signal_time_type in ["green", "yellow", "redClearance", "red"]
+                    }
+
+                    # Collect start and end times for green, yellow, and redClearance for each phase occurrence
+                    for idx in range(df_vehicle_phase_profile_phase.shape[0]):
+                        dict_signal_times["green"].append((df_vehicle_phase_profile_phase.loc[idx, "greenBegin"], df_vehicle_phase_profile_phase.loc[idx, "greenEnd"]))
+                        dict_signal_times["yellow"].append((df_vehicle_phase_profile_phase.loc[idx, "yellowBegin"], df_vehicle_phase_profile_phase.loc[idx, "yellowEnd"]))
+                        dict_signal_times["redClearance"].append((df_vehicle_phase_profile_phase.loc[idx, "redClearanceBegin"], df_vehicle_phase_profile_phase.loc[idx, "redClearanceEnd"]))
+
+                    # Sort all phase time intervals in order
+                    signal_times = [tuple([cycle_begin])] + dict_signal_times["green"] + dict_signal_times["yellow"] + dict_signal_times["redClearance"] + [tuple([cycle_end])]
+                    signal_times = sorted(signal_times, key=lambda x: x[0])
+                    
+                    # Generate 'red' intervals by identifying gaps between sorted intervals
+                    for start, end in zip(signal_times[:-1], signal_times[1:]):
+                        if start[-1] == end[0]:
+                            continue
+                        dict_signal_times["red"].append((start[-1], end[0]))
+
+                    # Update cycle information dictionary with collected signal times for each type
+                    for signal_time_type in ["green", "yellow", "redClearance", "red"]:
+                        dict_vehicle_cycle_profile_id[f"{signal_time_type}Phase{phase_no}"] = dict_signal_times[signal_time_type]
+
+                # Append the current cycle information to the cycle profile DataFrame
+                df_vehicle_cycle_profile_id = pd.concat([df_vehicle_cycle_profile_id, pd.DataFrame([dict_vehicle_cycle_profile_id])], 
+                                                        ignore_index=True)
+
+            # Sort cycle profiles and drop incomplete first and last cycles
+            df_vehicle_cycle_profile_id = df_vehicle_cycle_profile_id.sort_values(by=["cycleNo"]).iloc[1:-1].reset_index(drop=True)
+            # Add date information to the DataFrame
+            df_vehicle_cycle_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+
+            # Define export directory and save the cycle profile DataFrame
+            absolute_signal_export_dir = os.path.join(root_dir, self.relative_signal_export_parent_dir, "cycle", "vehicle", signal_id)
+            os.makedirs(absolute_signal_export_dir, exist_ok=True)
+            profile_filepath = f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv"
+            
+            df_vehicle_cycle_profile_id.to_csv(profile_filepath, index=False)
+
+            return df_vehicle_cycle_profile_id
+
+        except Exception as e:
+            logging.error(f"Error extracting vehicle cycle profile for signal ID {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting vehicle cycle profile for signal ID {signal_id}: {e}", sys_module=sys)
+        
+        
 
 
 
