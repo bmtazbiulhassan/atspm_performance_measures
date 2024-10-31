@@ -7,7 +7,7 @@ import os
 
 # from src.exception import CustomException
 from src.logger import logging
-from src.utils import get_root_directory, get_column_name_by_partial_name, float_to_int
+from src.utils import get_root_directory, get_column_name_by_partial_name, float_to_int, export_data
 
 
 # Get the root directory of the project
@@ -17,19 +17,17 @@ root_dir = get_root_directory()
 with open(os.path.join(root_dir, "config.yaml"), "r") as file:
     config = yaml.safe_load(file)
 
+# Retrive relative base dir
+relative_raw_base_dir = config["relative_base_dir"]["raw"]
+relative_interim_base_dir = config["relative_base_dir"]["interim"]
+
+# Retrieve settings for preprocessing
 config = config["data_preprocessing"]
 
 
-def preprocess_noemi_reports(relative_report_import_parent_dir: str, relative_report_export_dir: str):
+def preprocess_noemi_reports():
     """
     Loads, preprocesses, and exports NOEMI report data for a specified signal.
-
-    Parameters:
-    -----------
-    relative_report_import_parent_dir : str
-        Relative path to the parent directory containing subdirectories with NOEMI report data files.
-    relative_report_export_dir : str
-        Relative path to the directory where preprocessed data will be saved.
 
     Returns:
     --------
@@ -40,18 +38,19 @@ def preprocess_noemi_reports(relative_report_import_parent_dir: str, relative_re
     CustomException
         If any issues occur during loading, renaming columns, or exporting data.
     """
-    # Define absolute paths for import directories
-    absolute_report_import_parent_dir = os.path.join(root_dir, relative_report_import_parent_dir)
+    # Retrieve report import and config export sub-directories
+    report_import_sub_dirs = config["noemi"]["report_import_sub_dirs"]
+    config_export_sub_dirs = config["noemi"]["config_export_sub_dirs"]
     
-    # Retrieve the directory name for "intersection" and "lane" reports from the YAML config
+    # Retrieve the directory name for "intersection" and "lanes" tables from the YAML config
     intersection_dir = config["noemi"]["intersection_dir"]
-    lane_dir = config["noemi"]["lane_dir"]
+    lanes_dir = config["noemi"]["lanes_dir"]
 
-    # List filepath to all "lanes" report
-    lane_filepaths = os.path.join(absolute_report_import_parent_dir, lane_dir, "*.csv")
-    lane_filepaths = [filepath for filepath in glob.glob(lane_filepaths)]
+    # List all "lanes" filepaths
+    lanes_filepaths = os.path.join(root_dir, relative_raw_base_dir, *report_import_sub_dirs, lanes_dir, "*.csv")
+    lanes_filepaths = [filepath for filepath in glob.glob(lanes_filepaths)]
 
-    for lane_filepath in tqdm.tqdm(lane_filepaths):
+    for lane_filepath in tqdm.tqdm(lanes_filepaths):
         try:
             # Load "lane" report data
             df_lane_report_id = pd.read_csv(lane_filepath)
@@ -71,7 +70,7 @@ def preprocess_noemi_reports(relative_report_import_parent_dir: str, relative_re
             df_report_id = df_lane_report_id.copy()
 
             # Filepath to "intersection" report for the given signal ID
-            intersection_filepath = os.path.join(absolute_report_import_parent_dir, intersection_dir, f"{signal_id}.csv")
+            intersection_filepath = os.path.join(root_dir, relative_raw_base_dir, *report_import_sub_dirs, intersection_dir, f"{signal_id}.csv")
             
             # Load "intersection" report data
             df_intersection_report_id = pd.read_csv(intersection_filepath)
@@ -94,14 +93,12 @@ def preprocess_noemi_reports(relative_report_import_parent_dir: str, relative_re
             # Convert float columns to integers where applicable
             df_report_id = float_to_int(df_report_id)
 
-            # Absolute path to export directory
-            absolute_report_export_dir = os.path.join(root_dir, relative_report_export_dir)
-
-            # Ensure the export directory exists
-            os.makedirs(absolute_report_export_dir, exist_ok=True)
-
             # Save the preprocessed report as a CSV file in the export directory
-            df_report_id.to_csv(f"{absolute_report_export_dir}/{signal_id}.csv", index=False)
+            export_data(df=df_report_id, 
+                        base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                        filename=f"{signal_id}", 
+                        file_type="csv", 
+                        sub_dirs=config_export_sub_dirs)
         
         except Exception as e:
             logging.error(f"Error processing NOEMI report for signal ID {signal_id}: {e}")

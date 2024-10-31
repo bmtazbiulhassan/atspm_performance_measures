@@ -1,33 +1,35 @@
 import pandas as pd
 import tqdm
+import yaml
 import sys
 import os
 import gc
 
 from src.exception import CustomException
 from src.logger import logging
-from src.utils import get_root_directory, get_column_name_by_partial_name
+from src.utils import get_root_directory, get_column_name_by_partial_name, export_data
 
 
 # Get the root directory of the project
 root_dir = get_root_directory()
 
+# Load the YAML configuration file (using absolute path)
+with open(os.path.join(root_dir, "config.yaml"), "r") as file:
+    config = yaml.safe_load(file)
+
+# Retrive relative base dir
+relative_raw_base_dir = config["relative_base_dir"]["raw"]
+relative_interim_base_dir = config["relative_base_dir"]["interim"]
+
+# Retrieve settings for data sorting
+config = config["data_sorting"]
+
 
 class DataSort:
-    def __init__(self, relative_event_import_parent_dir: str, relative_event_export_parent_dir: str):
-        """
-        Initialize DataSort with directories for raw data and sorted output.
-
-        Parameters:
-        -----------
-        relative_event_import_parent_dir : str
-            Relative directory path to sub-directories where raw ATSPM event data CSV files are stored.
-        relative_event_export_parent_dir : str
-            Relative directory path to sub-directories where sorted event data files will be saved as 
-            pickle and CSV files.
-        """
-        self.relative_event_import_parent_dir = relative_event_import_parent_dir
-        self.relative_event_export_parent_dir = relative_event_export_parent_dir
+    def __init__(self):
+        # Retrieve event import and export sub-directories
+        self.event_import_sub_dirs = config["sunstore"]["event_import_sub_dirs"]
+        self.event_export_sub_dirs = config["sunstore"]["event_export_sub_dirs"]
 
     def export(self, df_event: pd.DataFrame, signal_id: str):
         """
@@ -42,7 +44,7 @@ class DataSort:
 
         Outputs:
         --------
-        None: Exports sorted data for each signal as a pickle file and CSV files (for each date).
+        None: Exports sorted data for each signal and date as pickle files.
         """
         try:
             # Get column names
@@ -59,16 +61,19 @@ class DataSort:
                                                                     format="%m-%d-%Y %H:%M:%S.%f")
             df_event_id = df_event_id.sort_values(by=dict_column_names["time"]).reset_index(drop=True)
 
-            # Absolute directory path for export the sorted event data files
-            absolute_event_export_dir = os.path.join(root_dir, self.relative_event_export_parent_dir, signal_id)
+            # Revise event export sub-directories based on signal
+            event_export_sub_dirs = self.event_import_sub_dirs + [f"{signal_id}"]
 
-            # Ensure the export directory exists
-            os.makedirs(absolute_event_export_dir, exist_ok=True)
+            # Absolute path to event export directory
+            event_export_dir = os.path.join(root_dir, relative_interim_base_dir, *event_export_sub_dirs)
+
+            # # Ensure the export directory exists
+            os.makedirs(event_export_dir, exist_ok=True)
 
             # Check if a sorted file already exists for this signal
-            if os.path.exists(f"{absolute_event_export_dir}/{signal_id}.pkl"):
+            if os.path.exists(f"{event_export_dir}/{signal_id}.pkl"):
                 # Append existing data to the current data
-                df_event_id = pd.concat([df_event_id, pd.read_pickle(f"{absolute_event_export_dir}/{signal_id}.pkl")], 
+                df_event_id = pd.concat([df_event_id, pd.read_pickle(f"{event_export_dir}/{signal_id}.pkl")], 
                                         ignore_index=True)
                 df_event_id = df_event_id.drop_duplicates().sort_values(by=dict_column_names["time"]).reset_index(drop=True)
 
@@ -80,14 +85,23 @@ class DataSort:
             # Create a new 'date' column containing only the date part (no time)
             df_event_id['date'] = df_event_id[dict_column_names["time"]].dt.date
 
-            # Save CSV files (for each date)
+            # Save pickle files (for each date)
             for date in df_event_id["date"].unique():
                 df_event_date = df_event_id[df_event_id["date"] == date].reset_index(drop=True)
-                df_event_date.to_csv(f"{absolute_event_export_dir}/{date.year}-{date.month:02d}-{date.day:02d}.csv", 
-                                     index=False)
+
+                # Export as pickle file
+                export_data(df=df_event_date, 
+                            base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                            filename=f"{date.year}-{date.month:02d}-{date.day:02d}", 
+                            file_type="pkl", 
+                            sub_dirs=event_export_sub_dirs)
             
-            # Save the data as a pickle file
-            df_event_id.to_pickle(f"{absolute_event_export_dir}/{signal_id}.pkl")
+            # Save the data as a pickle file (for each signal)
+            export_data(df=df_event_id, 
+                        base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                        filename=f"{signal_id}", 
+                        file_type="pkl", 
+                        sub_dirs=event_export_sub_dirs)
 
         except Exception as e:
             logging.error(f"Error exporting data for signal ID {signal_id}: {e}")
@@ -112,22 +126,19 @@ class DataSort:
 
         Outputs:
         --------
-        None: Exports sorted data for each signal ID as a pickle file and CSV files (for each date), tracks 
-        sorted files in a checker file, and logs each step of the process. If any error occurs during data 
-        sorting, or exporting, it raises a CustomException with details.
+        None: Exports sorted data for each signal and date as pickle files., tracks sorted files in a checker 
+        file, and logs each step of the process. If any error occurs during data sorting, or exporting, it 
+        raises a CustomException with details.
         """
         try:
-            absolute_event_export_parent_dir = os.path.join(root_dir, self.relative_event_export_parent_dir)
+            # Absolute path to check export directory
+            check_export_dir = os.path.join(root_dir, relative_interim_base_dir, *self.event_export_sub_dirs)
 
-            # Ensure the export directory exists
-            os.makedirs(absolute_event_export_parent_dir, exist_ok=True)
-
-            # Define the path for daily data to process
-            absolute_event_import_dir = os.path.join(self.relative_event_import_parent_dir, f"{year}-{month:02d}")
-            event_filepath = os.path.join(root_dir, absolute_event_import_dir, f"atspm-{year}-{month}-{day}.csv")
+            # Ensure the check export directory exists
+            os.makedirs(check_export_dir, exist_ok=True)
 
             # Define the path for the check file that tracks sorted files
-            check_filepath = os.path.join(absolute_event_export_parent_dir, "checker.csv")
+            check_filepath = os.path.join(check_export_dir, "checker.csv")
 
             # Initialize the check file if it doesn't exist
             if not os.path.exists(check_filepath):
@@ -136,6 +147,13 @@ class DataSort:
 
             # Load the check file
             df_check = pd.read_csv(check_filepath)
+
+            # Revise event import sub-directories based on year, and month
+            event_import_sub_dirs = self.event_import_sub_dirs + [f"{year}-{month:02d}"]
+
+            # Absolute path to event import directory
+            event_import_dir = os.path.join(root_dir, relative_raw_base_dir, *event_import_sub_dirs)
+            event_filepath = os.path.join(event_import_dir, f"atspm-{year}-{month}-{day}.csv")
 
             # Skip files that have already been sorted
             if event_filepath in df_check["fileProc"].unique():

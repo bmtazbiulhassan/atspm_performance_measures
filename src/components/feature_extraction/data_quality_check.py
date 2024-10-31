@@ -1,12 +1,13 @@
 import pandas as pd
 import glob
 import yaml
+import tqdm
 import sys
 import os
 
 from src.exception import CustomException
 from src.logger import logging
-from src.utils import get_root_directory, get_column_name_by_partial_name, get_single_unique_value, create_dict
+from src.utils import get_root_directory, get_column_name_by_partial_name, get_single_unique_value, create_dict, load_data, export_data
 from src.components.feature_extraction.feature_extraction import CoreEventUtils
 
 
@@ -17,6 +18,11 @@ root_dir = get_root_directory()
 with open(os.path.join(root_dir, "config.yaml"), "r") as file:
     config = yaml.safe_load(file)
 
+# Retrive relative base dir
+relative_interim_base_dir = config["relative_base_dir"]["interim"]
+relative_production_base_dir = config["relative_base_dir"]["production"]
+
+# Retrieve settings for data quality check
 config = config["data_quality_check"]
 
 # Instantiate the CoreEventUtils class for event utility methods
@@ -24,55 +30,70 @@ core_event_utils = CoreEventUtils()
 
 
 class DataQualityCheck:
-    def __init__(self, relative_event_import_parent_dir: str, relative_config_import_dir: str, relative_check_export_parent_dir: str, check_event_sequence_of: str):
+    def __init__(self, event_type: str):
         """
-        Initialize the class with paths to event data, configuration data, and export directory.
+        Initialize the class with the type of event sequence to check.
 
         Parameters:
         -----------
-        relative_event_import_parent_dir : str
-            Relative directory path containing sub-directories where ATSPM event data CSV files are stored.
-        relative_config_import_dir : str
-            Relative directory path containing signal configuration data.
-        relative_check_export_parent_dir : str
-            Relative directory path to sub-directories for saving data quality check results.
-        check_event_sequence_of : str
+        event_type : str
             Type of event sequence to check ('vehicle_signal' or 'vehicle_traffic').
         """
-        self.relative_event_import_parent_dir = relative_event_import_parent_dir
-        self.relative_config_import_dir = relative_config_import_dir
-        self.relative_check_export_parent_dir = relative_check_export_parent_dir
-        self.check_event_sequence_of = check_event_sequence_of
+        self.event_type = event_type
+        
+        # Retrieve event import and check export sub-directories
+        self.event_import_sub_dirs = config["sunstore"]["event_import_sub_dirs"]
+        self.check_export_sub_dirs = config["sunstore"]["check_export_sub_dirs"]
 
-    def check_data_quality(self, day: int, month: int, year: int, signal_ids: list = []):
+        # Retrieve config import sub-directories
+        self.config_import_sub_dirs = config["noemi"]["event_import_sub_dirs"]
+
+    def check_data_quality(self, signal_ids: list,day: int, month: int, year: int):
         """
         Perform data quality checks on ATSPM event data by analyzing event sequences.
 
         Parameters:
         -----------
+        signal_ids : list
+            List of specific signal IDs to process.
         day : int
             Day of the date (1-31) to filter data by.
         month : int
             Month of the date (1-12) fto filter data by.
         year : int
             Year of the date (e.g., 2024) to filter data by.
-        signal_ids : list, optional
-            List of specific signal IDs to process; processes all if empty.
+
+        Returns:
+        --------
+        None: The function saves the preprocessed data as a CSV file in the specified export directory.
         """
         try:
-            absolute_event_import_parent_dir = os.path.join(root_dir, self.relative_event_import_parent_dir)
-            absolute_event_import_dirs = glob.glob(os.path.join(absolute_event_import_parent_dir, "*"))
+            for signal_id in tqdm.tqdm(signal_ids):
+                # Revise event import sub-directories based on signal id
+                event_import_sub_dirs = self.event_import_sub_dirs + [f"{signal_id}"]
 
-            for absolute_event_import_dir in absolute_event_import_dirs:
-                signal_id = os.path.basename(absolute_event_import_dir)
-                if signal_ids and (signal_id not in signal_ids):
+                # Absolute path to event import directory
+                event_import_dir = os.path.join(root_dir, relative_interim_base_dir, *event_import_sub_dirs)
+
+                if not os.path.isdir(event_import_dir):
                     continue
 
                 # Load configuration and event data for the current signal ID
                 config_filepath = os.path.join(root_dir, self.relative_config_import_dir, f"{signal_id}.csv")
+
                 try:
-                    df_config_id = pd.read_csv(config_filepath)
-                    df_event_id = pd.read_csv(f"{absolute_event_import_dir}/{year}-{month:02d}-{day:02d}.csv")
+                    # Load event data
+                    df_event_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                                            filename=f"{year}-{month:02d}-{day:02d}", 
+                                            file_type="pkl", 
+                                            sub_dirs=event_import_sub_dirs)
+
+                    # Load signal configuraiton data
+                    df_config_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                                             filename=f"{signal_id}",
+                                             file_type="csv", 
+                                             sub_dirs=self.config_import_sub_dirs)
+                    
                 except FileNotFoundError as e:
                     logging.error(f"File not found: {e}")
                     raise CustomException(custom_message=f"File not found: {e}", sys_module=sys)
@@ -98,17 +119,17 @@ class DataQualityCheck:
                 dict_valid_event_sequence = config["sunstore"]["valid_event_sequence"]
 
                 # Check if the specified event type is valid and retrieve corresponding event sequence
-                if self.check_event_sequence_of in dict_valid_event_sequence:
-                    valid_event_sequence = dict_valid_event_sequence[self.check_event_sequence_of]
+                if self.event_type in dict_valid_event_sequence:
+                    valid_event_sequence = dict_valid_event_sequence[self.event_type]
                     unique_params, error_sequence_counter, correct_sequence_counter = self.inspect_sequence(
                         df_event=df_event_id,
                         event_param_column_name=dict_column_names["param"],
                         valid_event_sequence=valid_event_sequence
                     )
                 else:
-                    logging.error(f"{self.check_event_sequence_of} is not valid.")
+                    logging.error(f"{self.event_type} is not valid.")
                     raise CustomException(
-                        custom_message=f"{self.check_event_sequence_of} is not valid. Must be 'vehicle_signal' or 'vehicle_traffic'.", 
+                        custom_message=f"{self.event_type} is not valid. Must be 'vehicle_signal' or 'vehicle_traffic'.", 
                         sys_module=sys
                         )
                 
@@ -130,7 +151,7 @@ class DataQualityCheck:
                 df_quality_check_id = pd.DataFrame(dict_quality_check_id)
 
                 # Add signal ID and unique parameters to DataFrame
-                column_suffix = "phaseNo" if self.check_event_sequence_of == "vehicle_signal" else "channelNo"
+                column_suffix = "phaseNo" if self.event_type == "vehicle_signal" else "channelNo"
                 df_quality_check_id[column_suffix] = unique_params
 
                 # Add additional attributes from configuration data
@@ -141,11 +162,12 @@ class DataQualityCheck:
                 # Add date information
                 df_quality_check_id["date"] = pd.Timestamp(f"{year}-{month}-{day}").date()
 
-                # Ensure export directory exists and save DataFrame to CSV
-                absolute_check_export_dir = os.path.join(root_dir, self.relative_check_export_parent_dir, self.check_event_sequence_of)
-                os.makedirs(absolute_check_export_dir, exist_ok=True)
-
-                df_quality_check_id.to_csv(f"{absolute_check_export_dir}/{signal_id}.csv", index=False)
+                # Save the quality check report as a CSV file in the export directory
+                export_data(df=df_quality_check_id, 
+                            base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                            filename=f"{signal_id}", 
+                            file_type="csv", 
+                            sub_dirs=self.check_export_sub_dirs + [self.event_type])
 
         except Exception as e:
             logging.error("Error in check_data_quality function")

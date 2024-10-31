@@ -5,7 +5,7 @@ import os
 
 from src.exception import CustomException
 from src.logger import logging
-from src.utils import get_root_directory, get_column_name_by_partial_name, float_to_int
+from src.utils import get_root_directory, get_column_name_by_partial_name, float_to_int, load_data, export_data
 
 
 # Get the root directory of the project
@@ -15,6 +15,11 @@ root_dir = get_root_directory()
 with open(os.path.join(root_dir, "config.yaml"), "r") as file:
     config = yaml.safe_load(file)
 
+# Retrive relative base dir
+relative_interim_base_dir = config["relative_base_dir"]["interim"]
+relative_production_base_dir = config["relative_base_dir"]["production"]
+
+# Retrieve settings for feature extraction
 config = config["feature_extraction"]
 
 
@@ -190,19 +195,12 @@ class CoreEventUtils:
 
 
 class TrafficSignalProfile(CoreEventUtils):
-    def __init__(self, relative_event_import_parent_dir: str, relative_config_import_dir: str, relative_signal_export_parent_dir: str, day: int, month: int, year: int):
+    def __init__(self, day: int, month: int, year: int):
         """
-        Initializes the TrafficSignalProfile class with necessary paths.
+        Initialize the class with day, month, and year of the date to process.
 
         Parameters:
         -----------
-        relative_event_import_parent_dir : str
-            Relative path to directory which contains sub-directories where event data for signals is stored.
-        relative_config_import_dir : str
-            Relative path to directory where configuration data for signals is stored.
-        relative_signal_export_parent_dir : str
-            Relative path to directory which contains sub-directories, which further contains sub-directors, 
-            where extracted signal profile for phase and cycle will be saved.
         day : int
             Day of the desired date (1-31).
         month : int
@@ -210,11 +208,14 @@ class TrafficSignalProfile(CoreEventUtils):
         year : int
             Year of the desired date (e.g., 2024).
         """
-        self.relative_event_import_parent_dir = relative_event_import_parent_dir
-        self.relative_config_import_dir = relative_config_import_dir
-        self.relative_signal_export_parent_dir = relative_signal_export_parent_dir
-
         self.day = day; self.month = month; self.year = year
+        
+        # Retrieve event import and signal export sub-directories
+        self.event_import_sub_dirs = config["sunstore"]["event_import_sub_dirs"]
+        self.signal_export_sub_dirs = config["sunstore"]["signal_export_sub_dirs"]
+
+        # Retrieve config import sub-directories
+        self.config_import_sub_dirs = config["noemi"]["event_import_sub_dirs"]
 
     def add_barrier_no(self, signal_id: str):
         """
@@ -231,8 +232,10 @@ class TrafficSignalProfile(CoreEventUtils):
             Configuration DataFrame with barrier numbers.
         """
         # Load configuration data for the specific signal
-        config_filepath = os.path.join(root_dir, self.relative_config_import_dir, f"{signal_id}.csv")
-        df_config_id = pd.read_csv(config_filepath)
+        df_config_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                                 filename=f"{signal_id}",
+                                 file_type="csv", 
+                                 sub_dirs=self.config_import_sub_dirs)
 
         # Convert columns with float values to integer type where applicable
         df_config_id = float_to_int(df_config_id)
@@ -261,29 +264,27 @@ class TrafficSignalProfile(CoreEventUtils):
         
         return df_config_id
 
-    def extract_phase_profile(self, signal_id: str, signal_type: str):
+    def extract_phase_profile(self, signal_id: str, event_type: str):
         """
-        Load, prepare, and extract phase data for a specific signal (vehicle or pedestrian).
+        Load, prepare, and extract phase data for a specific event type ('vehicle_signal' or 'pedestrian_signal').
 
         Parameters:
         -----------
         signal_id : str
             Unique identifier for the signal.
-        signal_type : str
-            Type of signal to process - "vehicle" or "pedestrian".
+        event_type : str
+            Type of event to process - 'vehicle_signal' or 'pedestrian_signal'.
 
         Returns:
         --------
         pd.DataFrame
             DataFrame containing extracted phase data.
         """
-        # Load file path for event data
-        event_filepath = os.path.join(
-            root_dir, self.relative_event_import_parent_dir, signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
-            )
+        # Revise event import sub-directories based on signal id
+        event_import_sub_dirs = self.event_import_sub_dirs + [f"{signal_id}"]
 
         # Set event sequence and mapping based on signal type
-        if signal_type == "vehicle":
+        if event_type == "vehicle_signal":
             # Mapping event codes to respective phase times
             event_code_map = {
                 "greenBegin": 1, "greenEnd": 8,
@@ -292,7 +293,7 @@ class TrafficSignalProfile(CoreEventUtils):
             }
             valid_event_sequence = config["sunstore"]["valid_event_sequence"]["vehicle_signal"]
 
-        elif signal_type == "pedestrian":
+        elif event_type == "pedestrian_signal":
             # Mapping event codes for pedestrian phases
             event_code_map = {
                 "pedestrianWalkBegin": 21, "pedestrianWalkEnd": 22,
@@ -302,9 +303,9 @@ class TrafficSignalProfile(CoreEventUtils):
             valid_event_sequence = config["sunstore"]["valid_event_sequence"]["pedestrian_signal"]
 
         else:
-            logging.error(f"{signal_type} is not valid.")
+            logging.error(f"{event_type} is not valid.")
             raise CustomException(
-                custom_message=f"{signal_type} is not valid. Must be 'vehicle' or 'pedestrian'.", 
+                custom_message=f"{event_type} is not valid. Must be 'vehicle' or 'pedestrian'.", 
                 sys_module=sys
             )
 
@@ -312,8 +313,13 @@ class TrafficSignalProfile(CoreEventUtils):
             # Load and prepare configuration data with barrier numbers if applicable
             df_config_id = self.add_barrier_no(signal_id=signal_id)
 
-            # Load event data and prepare column names dynamically
-            df_event_id = pd.read_pickle(event_filepath)
+            # Load event data
+            df_event_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                    file_type="pkl", 
+                                    sub_dirs=event_import_sub_dirs)
+
+            # Get column names
             dict_column_names = {
                 "phase": get_column_name_by_partial_name(df=df_config_id, partial_name="phase"),
                 
@@ -321,6 +327,7 @@ class TrafficSignalProfile(CoreEventUtils):
                 "code": get_column_name_by_partial_name(df=df_event_id, partial_name="code"),
                 "time": get_column_name_by_partial_name(df=df_event_id, partial_name="time")
             }
+
             # Convert the timestamp column to datetime and sort data by time
             df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]], 
                                                                     format="%Y-%m-%d %H:%M:%S.%f")
@@ -339,6 +346,7 @@ class TrafficSignalProfile(CoreEventUtils):
 
                 for sequence_id in df_event_phase["sequenceID"].unique():
                     df_event_sequence = df_event_phase[df_event_phase["sequenceID"] == sequence_id]
+                    
                     current_event_sequence = df_event_sequence[dict_column_names["code"]].tolist()
                     correct_flag = int(current_event_sequence == valid_event_sequence)
 
@@ -350,8 +358,9 @@ class TrafficSignalProfile(CoreEventUtils):
                         **{key: df_event_sequence[df_event_sequence[dict_column_names["code"]] == code][dict_column_names["time"]].iloc[0]
                            if code in current_event_sequence else pd.NaT for key, code in event_code_map.items()}
                     }
+                    
                     # Conditionally add "barrierNo" if the signal type is "vehicle"
-                    if signal_type == "vehicle":
+                    if event_type == "vehicle":
                         dict_phase_profile_id["barrierNo"] = config["noemi"]["barrier_map"].get(int(phase_no), 0)
 
                     phase_profile_id.append(dict_phase_profile_id)
@@ -368,13 +377,15 @@ class TrafficSignalProfile(CoreEventUtils):
             # Add date information
             df_phase_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Export phase data to appropriate directory based on signal type
-            absolute_signal_export_dir = os.path.join(
-                root_dir, self.relative_signal_export_parent_dir, "phase", signal_type, signal_id,
-                )
-            os.makedirs(absolute_signal_export_dir, exist_ok=True)
-            profile_filepath = f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv"
-            df_phase_profile_id.to_csv(profile_filepath, index=False)
+            # Revise signal export sub-directories
+            signal_export_sub_dirs = self.signal_export_sub_dirs + ["phase" + f"{event_type}", f"{signal_id}"]
+
+            # Save the phase profile data as a pkl file in the export directory
+            export_data(df=df_phase_profile_id, 
+                        base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                        filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                        file_type="pkl", 
+                        sub_dirs=signal_export_sub_dirs)
 
             return df_phase_profile_id
 
@@ -399,7 +410,7 @@ class TrafficSignalProfile(CoreEventUtils):
         pd.DataFrame
             DataFrame with extracted vehicle phase data.
         """
-        return self.extract_phase_profile(signal_id, signal_type="vehicle")
+        return self.extract_phase_profile(signal_id, event_type="vehicle_signal")
 
     def extract_pedestrian_phase_profile(self, signal_id: str):
         """
@@ -415,7 +426,7 @@ class TrafficSignalProfile(CoreEventUtils):
         pd.DataFrame
             DataFrame with extracted pedestrian phase data.
         """
-        return self.extract_phase_profile(signal_id, signal_type="pedestrian")
+        return self.extract_phase_profile(signal_id, event_type="pedestrian_signal")
 
     def assign_cycle_nos(self, df_vehicle_phase_profile: pd.DataFrame, start_barrier_no: int = 1):
         """
@@ -445,6 +456,7 @@ class TrafficSignalProfile(CoreEventUtils):
                 cycle_nos.append(cycle_no)  # Append current cycle number
 
             df_vehicle_phase_profile["cycleNo"] = cycle_nos  # Add cycle numbers to DataFrame
+
             return df_vehicle_phase_profile
 
         except Exception as e:
@@ -470,12 +482,13 @@ class TrafficSignalProfile(CoreEventUtils):
         try:
             # Define the file path for the vehicle phase data of the specified signal and date
             profile_filepath = os.path.join(
-                root_dir, self.relative_signal_export_parent_dir, "phase", "vehicle", signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
+                root_dir, relative_production_base_dir, *self.signal_export_sub_dirs, "phase", "vehicle_signal", signal_id,
+                f"{self.year}-{self.month:02d}-{self.day:02d}.pkl"
             )
 
             # Load vehicle phase profile data or extract it if file does not exist
             if os.path.exists(profile_filepath):
-                df_vehicle_phase_profile_id = pd.read_csv(profile_filepath)
+                df_vehicle_phase_profile_id = pd.read_pickle(profile_filepath)
             else:
                 df_vehicle_phase_profile_id = self.extract_vehicle_phase_profile(signal_id=signal_id)
 
@@ -496,6 +509,7 @@ class TrafficSignalProfile(CoreEventUtils):
                 
                 cycle_begin = df_vehicle_phase_profile_cycle.iloc[0]["greenBegin"]
                 cycle_end = df_vehicle_phase_profile_cycle.iloc[-1]["redClearanceEnd"]
+                
                 # Initialize dictionary to store cycle information for the current cycle
                 dict_vehicle_cycle_profile_id = {
                     "signalID": signal_id,
@@ -503,6 +517,7 @@ class TrafficSignalProfile(CoreEventUtils):
                     "cycleBegin": cycle_begin,
                     "cycleEnd": cycle_end
                 }
+
                 # Calculate cycle length based on cycle start and end times
                 dict_vehicle_cycle_profile_id["cycleLength"] = abs((dict_vehicle_cycle_profile_id["cycleEnd"] - dict_vehicle_cycle_profile_id["cycleBegin"]).total_seconds())
 
@@ -523,9 +538,15 @@ class TrafficSignalProfile(CoreEventUtils):
 
                     # Collect start and end times for green, yellow, and redClearance for each phase 
                     for idx in range(df_vehicle_phase_profile_phase.shape[0]):
-                        dict_signal_times["green"].append((df_vehicle_phase_profile_phase.loc[idx, "greenBegin"], df_vehicle_phase_profile_phase.loc[idx, "greenEnd"]))
-                        dict_signal_times["yellow"].append((df_vehicle_phase_profile_phase.loc[idx, "yellowBegin"], df_vehicle_phase_profile_phase.loc[idx, "yellowEnd"]))
-                        dict_signal_times["redClearance"].append((df_vehicle_phase_profile_phase.loc[idx, "redClearanceBegin"], df_vehicle_phase_profile_phase.loc[idx, "redClearanceEnd"]))
+                        dict_signal_times["green"].append(
+                            tuple([df_vehicle_phase_profile_phase.loc[idx, "greenBegin"], df_vehicle_phase_profile_phase.loc[idx, "greenEnd"]])
+                            )
+                        dict_signal_times["yellow"].append(
+                            tuple([df_vehicle_phase_profile_phase.loc[idx, "yellowBegin"], df_vehicle_phase_profile_phase.loc[idx, "yellowEnd"]])
+                            )
+                        dict_signal_times["redClearance"].append(
+                            tuple([df_vehicle_phase_profile_phase.loc[idx, "redClearanceBegin"], df_vehicle_phase_profile_phase.loc[idx, "redClearanceEnd"]])
+                            )
 
                     # Sort all phase time intervals in order
                     signal_times = [tuple([cycle_begin])] + dict_signal_times["green"] + dict_signal_times["yellow"] + dict_signal_times["redClearance"] + [tuple([cycle_end])]
@@ -551,12 +572,15 @@ class TrafficSignalProfile(CoreEventUtils):
             # Add date information to the DataFrame
             df_vehicle_cycle_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Define export directory and save the cycle profile DataFrame
-            absolute_signal_export_dir = os.path.join(root_dir, self.relative_signal_export_parent_dir, "cycle", "vehicle", signal_id)
-            os.makedirs(absolute_signal_export_dir, exist_ok=True)
-            profile_filepath = f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv"
+            # Revise signal export sub-directories
+            signal_export_sub_dirs = self.signal_export_sub_dirs + ["cycle" + "vehicle_signal", f"{signal_id}"]
 
-            df_vehicle_cycle_profile_id.to_csv(profile_filepath, index=False)
+            # Save the phase profile data as a pkl file in the export directory
+            export_data(df=df_vehicle_cycle_profile_id, 
+                        base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                        filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                        file_type="pkl", 
+                        sub_dirs=signal_export_sub_dirs)
 
             return df_vehicle_cycle_profile_id
 
@@ -581,25 +605,28 @@ class TrafficSignalProfile(CoreEventUtils):
         try:
             # Define the file path for the pedestrian phase data of the specified signal and date
             profile_filepath = os.path.join(
-                root_dir, self.relative_signal_export_parent_dir, "phase", "pedestrian", signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
+                root_dir, relative_production_base_dir, *self.signal_export_sub_dirs, "phase", "pedestrian_signal", signal_id,
+                f"{self.year}-{self.month:02d}-{self.day:02d}.pkl"
             )
 
             # Load pedestrian phase profile data if it exists, otherwise extract it
             if os.path.exists(profile_filepath):
-                df_pedestrian_phase_profile_id = pd.read_csv(profile_filepath)
+                df_pedestrian_phase_profile_id = pd.read_pickle(profile_filepath)
             else:
                 df_pedestrian_phase_profile_id = self.extract_pedestrian_cycle_profile(signal_id=signal_id)
 
             # Define the file path for the vehicle cycle data of the specified signal and date
             profile_filepath = os.path.join(
-                root_dir, self.relative_signal_export_parent_dir, "cycle", "pedestrian", signal_id, f"{self.year}-{self.month:02d}-{self.day:02d}.csv"
+                root_dir, relative_production_base_dir, *self.signal_export_sub_dirs, "cycle", "vehicle_signal", signal_id,
+                f"{self.year}-{self.month:02d}-{self.day:02d}.pkl"
             )
 
             # Load vehicle cycle profile data if it exists, otherwise extract it
             if os.path.exists(profile_filepath):
-                df_vehicle_cycle_profile_id = pd.read_csv(profile_filepath)
+                df_vehicle_cycle_profile_id = pd.read_pickle(profile_filepath)
             else:
                 df_vehicle_cycle_profile_id = self.extract_vehicle_cycle_profile(signal_id=signal_id)
+
 
             # Keep only rows with a correct pedestrian event sequence (21, 22, 23)
             df_pedestrian_phase_profile_id = df_pedestrian_phase_profile_id[df_pedestrian_phase_profile_id["correctSequenceFlag"] == 1]
@@ -625,13 +652,15 @@ class TrafficSignalProfile(CoreEventUtils):
             # Add date information to the DataFrame
             df_pedestrian_cycle_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Define export directory for the pedestrian cycle profile data and ensure it exists
-            absolute_signal_export_dir = os.path.join(root_dir, self.relative_signal_export_parent_dir, "cycle", "pedestrian", signal_id)
-            os.makedirs(absolute_signal_export_dir, exist_ok=True)
+            # Revise signal export sub-directories
+            signal_export_sub_dirs = self.signal_export_sub_dirs + ["cycle" + "pedestrian_signal", f"{signal_id}"]
 
-            # Save the DataFrame to a CSV file in the defined export directory
-            profile_filepath = f"{absolute_signal_export_dir}/{self.year}-{self.month:02d}-{self.day:02d}.csv"
-            df_pedestrian_cycle_profile_id.to_csv(profile_filepath, index=False)
+            # Save the phase profile data as a pkl file in the export directory
+            export_data(df=df_pedestrian_cycle_profile_id, 
+                        base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                        filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                        file_type="pkl", 
+                        sub_dirs=signal_export_sub_dirs)
 
             return df_pedestrian_cycle_profile_id
 

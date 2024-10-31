@@ -236,6 +236,7 @@ def create_dict(int_keys=None, str_keys=None, list_keys=None, dict_keys=None):
 
     return default_dict
 
+
 def load_data(base_dir: str, filename: str, file_type: str = "csv", sub_dirs: list = None):
     """
     Loads a DataFrame from a specified directory and file type.
@@ -250,6 +251,7 @@ def load_data(base_dir: str, filename: str, file_type: str = "csv", sub_dirs: li
         The type of file to load ("csv" or "pkl" for pickle). Default is "csv".
     sub_dirs : list, optional
         List of subdirectories within the base directory to navigate to the file.
+        Example: ["dir1", "dir2"] will access base_dir/dir1/dir2/filename.csv.
 
     Returns:
     --------
@@ -300,6 +302,7 @@ def export_data(df: pd.DataFrame, base_dir: str, filename: str, file_type: str =
         The type of file to save ("csv" or "pkl" for pickle). Default is "csv".
     sub_dirs : list, optional
         List of subdirectories within the base directory to save the file.
+        Example: ["dir1", "dir2"] will save the file to base_dir/dir1/dir2/filename.csv.
 
     Raises:
     -------
@@ -322,6 +325,8 @@ def export_data(df: pd.DataFrame, base_dir: str, filename: str, file_type: str =
 
     except Exception as e:
         raise CustomException(f"Unexpected error while exporting data: {str(e)}", sys_module=sys)
+
+
 
 
 

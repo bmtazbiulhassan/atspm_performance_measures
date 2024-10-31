@@ -13,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from src.exception import CustomException
 from src.logger import logging
-from src.utils import get_root_directory, init_driver
+from src.utils import get_root_directory, init_driver, export_data
 from dotenv import load_dotenv
 
 
@@ -24,9 +24,13 @@ load_dotenv()
 root_dir = get_root_directory()
 
 # Load the YAML configuration file (using absolute path)
-with open(os.path.join(root_dir, 'config.yaml'), "r") as file:
+with open(os.path.join(root_dir, "config.yaml"), "r") as file:
     config = yaml.safe_load(file)
 
+# Retrive relative base dir
+relative_raw_base_dir = config["relative_base_dir"]["raw"]
+
+# Retrieve settings for data scraping
 config = config["data_scraping"]
 
 # Retrieve wait time (in sec) to load web page while scraping
@@ -66,9 +70,9 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
         # Generate the URL by replacing SIIA ID placeholder in the base URL
         url = config["noemi"]["url"].replace("{}", str(siia_id))
 
-        # Load configuration settings for tables and directories
+        # Load configuration settings for tables and export sub-directories
         table_ids = config["noemi"]["table_ids"]
-        relative_report_export_parent_dir = config["noemi"]["relative_report_export_parent_dir"]
+        report_export_sub_dirs = config["noemi"]["report_export_sub_dirs"]
 
         # Open the report URL and wait for page to load
         driver.get(url)
@@ -92,13 +96,17 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
 
                 logging.info(f"Extracted data for table '{table_id}' from NOEMI report for SIIA ID: {siia_id}")
 
-                # Directory for saving table data as CSV
-                absolute_report_export_dir = os.path.join(root_dir, relative_report_export_parent_dir, table_id) # Absolute path
-                os.makedirs(absolute_report_export_dir, exist_ok=True)
+                # Revise export sub-directories based on table IDs
+                report_export_sub_dirs = report_export_sub_dirs + [f"{table_id}"]
 
-                # Define the report file path and save the DataFrame
-                report_filepath = os.path.join(absolute_report_export_dir, f"{signal_id}.csv")
-                df_report_id.to_csv(report_filepath, index=False)
+                # Export as CSV file
+                export_data(df=df_report_id, 
+                            base_dir=os.path.join(root_dir, relative_raw_base_dir), 
+                            filename=f"{signal_id}", 
+                            file_type="csv", 
+                            sub_dirs=report_export_sub_dirs)
+
+                report_filepath = os.path.join(root_dir, report_export_sub_dirs, *report_export_sub_dirs, f"{signal_id}.csv")
 
                 # Log the file saving operation and its path
                 logging.info(f"Saved NOEMI report data to {report_filepath}")
@@ -154,15 +162,17 @@ def scrape_event_data(day: int, month: int, year: int):
             sys_module=sys
         )
 
-    # Retrieve relative path to store event data and construct absolute download path
-    relative_event_export_parent_dir = config["sunstore"]["relative_event_export_parent_dir"]
-    absolute_event_export_dir = os.path.join(root_dir, relative_event_export_parent_dir, f"{year}-{month:02d}") # Absolute path
-    os.makedirs(absolute_event_export_dir, exist_ok=True)  # Create the directory if it doesn't exist
+    # Retrieve export sub-directories to store event data and revise based on date and month
+    event_export_sub_dirs = config["sunstore"]["event_export_sub_dirs"]
+    event_export_sub_dirs = event_export_sub_dirs + [f"{year}-{month:02d}"]
     
+    # Absolute path to event export directory
+    event_export_dir = os.path.join(root_dir, relative_raw_base_dir, *event_export_sub_dirs)
+
     driver = None
     # Initialize a browser driver for each browser type in sequence until successful
     for browser_type in browser_types:
-        driver = init_driver(browser_type=browser_type, download_dir=absolute_event_export_dir)
+        driver = init_driver(browser_type=browser_type, download_dir=event_export_dir)
         if driver:
             logging.info(f"{browser_type.capitalize()} driver initialized successfully.")
             break  # Continue with scraping if a driver is successfully initialized
@@ -274,7 +284,7 @@ def scrape_event_data(day: int, month: int, year: int):
                         time.sleep(wait_time)
                         
                         # Wait for the download to complete
-                        wait_for_download_completion(download_dir=absolute_event_export_dir)  
+                        wait_for_download_completion(download_dir=event_export_dir)  
 
                         logging.info("Download completed")
                         break  # Exit loop after clicking the download link
