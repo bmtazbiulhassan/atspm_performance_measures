@@ -1,20 +1,20 @@
-# ----------------------------
+# ----------------
+# General Settings
+# ----------------
+# Relative base directory paths
+relative_base_dir:
+  raw: "data/raw"
+  interim: "data/interim"
+  production: "data/production"
+
+
 # ----------------------------
 # Data Ingestion Configuration
 # ----------------------------
-# ----------------------------
-# This file contains configurations for various data ingestion processes, 
-# including scraping, loading, sorting, and pre-processing.
+# Configurations for various data ingestion processes, 
 
-# ---------------------------
-# Data Scraping Configuration
-# ---------------------------
-# Settings for scraping data from NOEMI reports and ATSPM event data from the Sunstore.
-
-data_scraping:
+data_scraping: # Settings for scraping data from NOEMI reports and ATSPM event data from Sunstore.
   
-  # General Settings
-  # ----------------
   # Time (in seconds) to wait for pages to fully load before interacting with elements.
   wait_time: 5
 
@@ -22,12 +22,11 @@ data_scraping:
   # Currently configured to use Chrome only.
   browser_types:
     - "chrome"
-
-  # NOEMI Report Scraping Configurations
-  # ------------------------------------
-  # Configuration settings for scraping reports from the NOEMI.
   
-  noemi:
+
+  # Configuration settings for scraping reports from the NOEMI.
+  noemi: 
+
     # Base URL template for accessing individual reports. Replace "{}" with the SIIA ID to retrieve the report for a specific intersection.
     url: "https://noemi.cflsmartroads.com/ssv/report.html?id={}"
     
@@ -38,15 +37,17 @@ data_scraping:
       - "approach"
       - "lanes"
     
-    # Relative directory path for storing extracted tables from NOEMI reports.
-    # Within this directory, each table will have its own sub-folder identified by table IDs.
-    relative_report_export_parent_dir: "data/raw/atspm/fdot_d5/noemi_report"
+    # Sequence of sub-directories (within base directory) for storing extracted tables from NOEMI reports.
+    report_export_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "noemi_report"
+    # - f"{table_id: 'intersection', 'controller', 'approach', 'lane'}" 
 
-  # Sunstore Event Data Scraping Configurations
-  # -------------------------------------------
+
   # Configuration settings for scraping ATSPM event data from the Sunstore.
-  
   sunstore:
+
     # Base URL for accessing the Sunstore portal.
     url: "https://sunstore.cflsmartroads.com"
 
@@ -59,50 +60,44 @@ data_scraping:
     # Column name in the Sunstore portal table containing the download link.
     link_column_name: "Download"
 
-    # Relative directory path for storing ATSPM event data scraped from Sunstore.
-    # Within this directory, sub-folders will be created by "year-month-day" for each date's event data in CSV format.
-    relative_event_export_parent_dir: "data/raw/atspm/fdot_d5/event_data"
+    # Sequence of sub-directories (within base directory) for storing ATSPM event data scraped from Sunstore.
+    event_export_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "event_data"
+    # - f"{year}-{month}-{day}"
 
-# --------------------------
-# Data Sorting Configuration
-# --------------------------
-# Settings for sorting and organizing raw ATSPM event data from Sunstore.
 
-data_sorting:
+data_sorting: # Settings for sorting and organizing raw ATSPM event data from Sunstore.
 
-  # Sunstore Event Data Sorting Configuration
-  # -----------------------------------------
   # Configuration settings for sorting ATSPM event data from Sunstore.
-
   sunstore:
-    # Relative path to the directory containing sub-directories of raw ATSPM event data in CSV format.
-    # Each sub-directory represents data from a specific date (formatted as "year-month-day").
-    relative_event_import_parent_dir: "data/raw/atspm/fdot_d5/event_data"
 
-    # Relative path the directory containing sub-directories for exporting the sorted and processed ATSPM data by signal ID and date.
-    # Each signal's data is saved as a pickle file and csv files (for each date), organized in a structure that makes it easy to access and use.
-    relative_event_export_parent_dir: "data/interim/atspm/fdot_d5/event_data"
+    # Sequence of sub-directories (within base directory) for importing ATSPM event data.
+    event_import_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "event_data"
+    # - f"{year}-{month}"
 
-# ---------------------------------
-# Data Pre-processing Configuration
-# ---------------------------------
-# Settings for pre-processing raw NOEMI reports and ATSPM event data from sunstore.
+    # Sequence of sub-directories (within base directory) for exporting sorted ATSPM event data.
+    event_export_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "event_data"
+    # - f"{signal_id}"
 
-data_preprocessing:
 
-  # NOEMI Reports Pre-processing Configurations
-  # -------------------------------------------
+data_preprocessing: # Settings for pre-processing raw NOEMI reports.
+
   # Settings for pre-processing NOEMI reports
-
   noemi:
-    # Relative directory path to the directories containing tables from NOEMI reports
-    relative_report_import_parent_dir: "data/raw/atspm/fdot_d5/noemi_report"
 
-    # Name of the directory containing the "intersection" and "lane" report
+    # Name of the directory containing the "intersection" and "lanes" tables
     intersection_dir: "intersection"
-    lane_dir: "lanes"
+    lanes_dir: "lanes"
 
-    # Mapping for renaming column names in the NOEMI "lane" report (by manual review)
+    # Mapping for renaming column names in the "lanes" table (by manual review)
     rename_map:
       Approach: approach
       Lane Type: laneType
@@ -115,34 +110,31 @@ data_preprocessing:
       Stopbar Distance: stopBarDistance
       Slot Number: slotNo
 
-    # Relative directory path to export the pre-processed "intersection" and "lane" report (which represents the signal configuration)
-    relative_report_export_dir: "data/interim/atspm/fdot_d5/signal_config"
+    # Sequence of sub-directories (within base directory) for importing "intersection" and "lanes" tables from NOEMI reports.
+    report_import_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "noemi_report"
+    # - f"{table_id: 'intersection', 'lanes'}"
+    
+    # Sequence of sub-directories (within base directory) for exporting signal configuration ("intersection" + "lanes" tables) data.
+    config_export_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "signal_config"
 
 
-# --------------------------------
 # --------------------------------
 # Feature Extraction Configuration
 # --------------------------------
-# --------------------------------
-# This file contains configurations for various feature extraction processes, 
-# including data quality check, and feature extraction.
+# Configurations for various feature extraction processes.
 
-# --------------------------------
-# Data Quality Check Configuration
-# --------------------------------
-# This section contains settings for validating the quality of ATSPM event data
-# from Sunstore and pre-processed NOEMI reports.
+data_quality_check: # Settings for validating the quality of ATSPM event data
 
-data_quality_check:
-
-  # Sunstore Event Data Quality Check Configuration
-  # -----------------------------------------------
   # Configuration for validating sequences and exporting data quality check results
-  # for ATSPM event data scraped from the Sunstore portal.
-
   sunstore:
-    # Define valid sequences for different types of event codes in ATSPM data.
-    # These sequences help verify if event codes in the data match expected patterns.
+
+    # Expected valid event sequences for different types of events.
     valid_event_sequence:
       
       # Expected event sequence for vehicle signal-related data checks
@@ -157,42 +149,37 @@ data_quality_check:
         - 82
         - 81
 
-    # Relative directory path to sub-directories for importing ATSPM event data to be checked for quality.
-    # Data within this sub-directories should be available by date and prepared for analysis.
-    relative_event_import_parent_dir: "data/interim/atspm/fdot_d5/event_data"
+    # Sequence of sub-directories (within base directory) for importing sorted ATSPM event data.
+    event_import_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "event_data"
+    # - f"{signal_id}"
 
-    # Relative directory path to sub-directories where data quality check results will be exported.
-    # The results will be stored per signal in subdirectories.
-    relative_check_export_parent_dir: "data/proc/atspm/fdot_d5/data_quality_check"
+    # Sequence of sub-directories (within base directory) for exporting quality check results.
+    check_export_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "data_quality_check"
+    # - f"{event_type: vehicle_signal, vehicle_traffic}"
 
-  # NOEMI Reports Quality Check Configuration
-  # ----------------------------------------
-  # Configuration for importing NOEMI signal configuration data, which is required
-  # to validate event sequences and ensure data consistency.
 
+  # Configuration for importing NOEMI signal configuration data, which is required to validate event sequences.
   noemi:
-    # Relative directory path to import NOEMI signal configuration data.
-    # This data is used to cross-reference ATSPM event data with known signal configurations.
-    relative_config_import_dir: "data/interim/atspm/fdot_d5/signal_config"
+   
+    # Sequence of sub-directories (within base directory) for exporting signal configuration data.
+    config_import_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "signal_config"
 
 
-# ---------------------------
-# Feature Extraction Settings
-# ---------------------------
-# This section defines configurations for extracting specific features from ATSPM event data, 
-# including expected event sequences and directory paths. The settings support validation, 
-# sequence assignment, and feature profiling of vehicle, pedestrian, and traffic-related signals.
+feature_extraction: # Configurations for extracting features from ATSPM event data
 
-feature_extraction:
-
-  # Sunstore Feature Extraction Configuration
-  # ----------------------------------------
-  # Configuration settings for extracting features and processing event sequences
-  # from ATSPM event data retrieved from the Sunstore.
-
+  # Settings for extracting features from ATSPM event data.
   sunstore:
-    # Define valid sequences for various event types, which assist in validating
-    # and extracting sequential events in the data for accurate feature profiling.
+
+    # Expected valid event sequences for various event types
     valid_event_sequence:
       
       # Expected event sequence for vehicle signal-related feature extraction
@@ -213,23 +200,28 @@ feature_extraction:
         - 82
         - 81
 
-    # Relative path to the directory containing sub-directories with raw ATSPM event data.
-    # Data should be organized by signal ID and date for processing and feature extraction.
-    relative_event_import_parent_dir : "data/interim/atspm/fdot_d5/event_data"
-            
-    # Relative path to the directory where the extracted signal profiles (e.g., phase and cycle data)
-    # will be saved, organized for easy access and further analysis.
-    relative_signal_export_parent_dir : "data/proc/atspm/fdot_d5/feature_extraction/signal"
+    # Sequence of sub-directories (within base directory) for importing sorted ATSPM event data.
+    event_import_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "event_data"
+    # - f"{signal_id}"
+
+    # Sequence of sub-directories (within base directory) for exporting vehicle and pedestrian signal profile.
+    signal_export_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "feature_extraction"
+      - "signal_profile"
+    # - f"{resolution_level: phase, cycle}"
+    # - f"{event_type: vehicle_signal, pedestrian_signal}"
+    # - f"{signal_id}"
         
 
-  # NOEMI Signal Configuration for Feature Extraction
-  # ------------------------------------------------
-  # Configuration settings for mapping signal phase numbers to barrier numbers 
-  # based on signal configuration data, facilitating feature extraction.
-
+  # Settings for mapping signal phase numbers to barrier numbers based on signal configuration data to facilitate feature extraction.
   noemi:
+
     # Barrier map for assigning barrier numbers to phase numbers in configuration data.
-    # This mapping aids in categorizing and profiling signal configurations during extraction.
     barrier_map:
       1: 2
       6: 2 
@@ -240,9 +232,11 @@ feature_extraction:
       4: 1
       7: 1
 
-    # Relative path to the directory containing NOEMI configuration data,
-    # which supports cross-referencing ATSPM event data with the associated signal configurations.
-    relative_config_import_dir : "data/interim/atspm/fdot_d5/signal_config"
+    # Sequence of sub-directories (within base directory) for exporting signal configuration data.
+    config_import_sub_dirs: 
+      - "atspm"
+      - "fdot_d5"
+      - "signal_config"
 
 
 
