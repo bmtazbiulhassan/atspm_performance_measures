@@ -5,7 +5,10 @@
 relative_base_dir:
   raw: "data/raw"
   interim: "data/interim"
-  production: "data/production"
+  transformed: "data/transformed"
+
+# Specify the FDOT district mapping for dynamic directory usage
+district: "fdot_d5"
 
 
 # ----------------------------
@@ -40,7 +43,7 @@ data_scraping: # Settings for scraping data from NOEMI reports and ATSPM event d
     # Sequence of sub-directories (within base directory) for storing extracted tables from NOEMI reports.
     report_export_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "noemi_report"
     # - f"{table_id: 'intersection', 'controller', 'approach', 'lane'}" 
 
@@ -63,7 +66,7 @@ data_scraping: # Settings for scraping data from NOEMI reports and ATSPM event d
     # Sequence of sub-directories (within base directory) for storing ATSPM event data scraped from Sunstore.
     event_export_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "event_data"
     # - f"{year}-{month}-{day}"
 
@@ -76,14 +79,14 @@ data_sorting: # Settings for sorting and organizing raw ATSPM event data from Su
     # Sequence of sub-directories (within base directory) for importing ATSPM event data.
     event_import_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "event_data"
-    # - f"{year}-{month}"
+    # - f"{year}-{month}-{day}"
 
     # Sequence of sub-directories (within base directory) for exporting sorted ATSPM event data.
     event_export_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "event_data"
     # - f"{signal_id}"
 
@@ -93,11 +96,11 @@ data_preprocessing: # Settings for pre-processing raw NOEMI reports.
   # Settings for pre-processing NOEMI reports
   noemi:
 
-    # Name of the directory containing the "intersection" and "lanes" tables
+    # Name of the directory containing the "intersection" and "lane" tables
     intersection_dir: "intersection"
-    lanes_dir: "lanes"
+    lane_dir: "lanes"
 
-    # Mapping for renaming column names in the "lanes" table (by manual review)
+    # Mapping for renaming column names in the "lane" table (by manual review)
     rename_map:
       Approach: approach
       Lane Type: laneType
@@ -110,17 +113,17 @@ data_preprocessing: # Settings for pre-processing raw NOEMI reports.
       Stopbar Distance: stopBarDistance
       Slot Number: slotNo
 
-    # Sequence of sub-directories (within base directory) for importing "intersection" and "lanes" tables from NOEMI reports.
+    # Sequence of sub-directories (within base directory) for importing "intersection" and "lane" tables from NOEMI reports.
     report_import_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "noemi_report"
-    # - f"{table_id: 'intersection', 'lanes'}"
+    # - f"{table_id: 'intersection', 'lane'}"
     
-    # Sequence of sub-directories (within base directory) for exporting signal configuration ("intersection" + "lanes" tables) data.
+    # Sequence of sub-directories (within base directory) for exporting signal configuration ("intersection" + "lane" tables) data.
     config_export_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "signal_config"
 
 
@@ -152,14 +155,14 @@ data_quality_check: # Settings for validating the quality of ATSPM event data
     # Sequence of sub-directories (within base directory) for importing sorted ATSPM event data.
     event_import_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "event_data"
     # - f"{signal_id}"
 
     # Sequence of sub-directories (within base directory) for exporting quality check results.
     check_export_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "data_quality_check"
     # - f"{event_type: vehicle_signal, vehicle_traffic}"
 
@@ -170,7 +173,7 @@ data_quality_check: # Settings for validating the quality of ATSPM event data
     # Sequence of sub-directories (within base directory) for exporting signal configuration data.
     config_import_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "signal_config"
 
 
@@ -203,18 +206,26 @@ feature_extraction: # Configurations for extracting features from ATSPM event da
     # Sequence of sub-directories (within base directory) for importing sorted ATSPM event data.
     event_import_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "event_data"
     # - f"{signal_id}"
 
     # Sequence of sub-directories (within base directory) for exporting vehicle and pedestrian signal profile.
     signal_export_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "feature_extraction"
       - "signal_profile"
     # - f"{resolution_level: phase, cycle}"
     # - f"{event_type: vehicle_signal, pedestrian_signal}"
+    # - f"{signal_id}"
+
+    # Sequence of sub-directories (within base directory) for exporting vehicle and pedestrian traffic features.
+    feature_export_sub_dirs: 
+      - "atspm"
+      - "{district}"
+      - "feature_extraction"
+    # - f"{feature_type: red light running, headway, etc.}"
     # - f"{signal_id}"
         
 
@@ -235,7 +246,7 @@ feature_extraction: # Configurations for extracting features from ATSPM event da
     # Sequence of sub-directories (within base directory) for exporting signal configuration data.
     config_import_sub_dirs: 
       - "atspm"
-      - "fdot_d5"
+      - "{district}"
       - "signal_config"
 
 
