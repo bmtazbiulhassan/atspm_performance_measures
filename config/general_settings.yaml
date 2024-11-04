@@ -1,0 +1,67 @@
+# ----------------
+# General Settings
+# ----------------
+
+# Relative database directory paths
+relative_database_dirpath:
+  raw: "data/raw"
+  interim: "data/interim"
+  production: "data/production"
+    
+
+# Path (from database directory) to directory containing tables scraped from NOEMI reports.
+raw_report_dirpath: "atspm/{district}/noemi_report/{table_id}" 
+# replace "{district}" with "fdot_d5", or "fdot_d7"
+# replace "{table_id}" with "intersection", "controller", "approach", or "lane"
+
+
+# Path (from database directory) to directory containing ATSPM event data scraped from Sunstore.
+raw_event_dirpath: "atspm/{district}/event_data/{year}-{month}-{day}" 
+# replace "{district}" with "fdot_d5", or "fdot_d7"
+# replace "{year}-{month}-{day}" with year, month, and day of the date of data
+
+
+# Path (from database directory) to directory containing sorted ATSPM event data.
+interim_event_dirpath: "atspm/{district}/event_data/{signal_id}" 
+# replace "{district}" with "fdot_d5", or "fdot_d7"
+# replace "{signal_id}" with signal ID
+
+
+# Path (from database directory) to directory containing signal configuration ("intersection" + "lane" tables) data.
+interim_config_dirpath: "atspm/{district}/signal_config"
+# replace "{district}" with "fdot_d5", or "fdot_d7"
+
+
+# Path (from database directory) to directory containing data quality check results.
+production_check_dirpath: "atspm/{district}/data_quality_check/{event_type}"
+# replace "{district}" with "fdot_d5", or "fdot_d7"
+# replace "{event_type}" with "vehicle_signal", or "vehicle_traffic"
+
+
+# Path (from database directory) to directory containing vehicle and pedestrian signal profile.
+production_signal_dirpath: "atspm/{district}/feature_extraction/signal_profile/{resolution_level}/{event_type}/{signal_id}"
+# replace "{district}" with "fdot_d5", or "fdot_d7"
+# replace "{resolution_level}" with "phase", or "cycle"
+# replace "{event_type}" with "vehicle_signal", or "pedestrian_signal"
+# replace "{signal_id}" with signal ID
+
+
+# Path (from database directory) to directory containing vehicle and pedestrian traffic features.
+production_feature_dirpath: "atspm/{district}/feature_extraction/feature/{resolution_level}/{event_type}/{feature_type}/{signal_id}"
+# replace "{district}" with "fdot_d5", or "fdot_d7"
+# replace "{resolution_level}" with "phase", or "cycle"
+# replace "{event_type}" with "vehicle_signal", "pedestrian_signal", "vehicle_traffic", or "pedestrian_traffic"
+# replace "{feature_type}" with feature name
+# replace "{signal_id}" with signal ID
+
+
+
+
+
+
+
+
+
+
+
+    

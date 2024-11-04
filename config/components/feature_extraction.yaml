@@ -1,0 +1,69 @@
+# --------------------------------
+# Feature Extraction Configuration
+# --------------------------------
+# Configurations for various feature extraction processes.
+
+data_quality_check: # Settings for validating the quality of ATSPM event data
+
+  # Configuration for validating sequences and exporting data quality check results
+  sunstore:
+
+    # Expected valid event sequences for different types of events.
+    valid_event_sequence:
+      
+      # Expected event sequence for vehicle signal-related data checks
+      vehicle_signal:
+        - 1
+        - 8
+        - 10
+        - 11
+
+      # Expected event sequence for vehicle traffic-related data checks
+      vehicle_traffic:
+        - 82
+        - 81
+
+
+
+feature_extraction: # Configurations for extracting features from ATSPM event data
+
+  # Settings for extracting features from ATSPM event data.
+  sunstore:
+
+    # Expected valid event sequences for various event types
+    valid_event_sequence:
+      
+      # Expected event sequence for vehicle signal-related feature extraction
+      vehicle_signal:
+        - 1
+        - 8
+        - 10
+        - 11
+    
+      # Expected event sequence for pedestrian signal-related feature extraction
+      pedestrian_signal:
+        - 21
+        - 22
+        - 23
+
+      # Expected event sequence for vehicle traffic-related feature extraction
+      vehicle_traffic:
+        - 82
+        - 81
+        
+
+  # Settings for mapping signal phase numbers to barrier numbers based on signal configuration data to facilitate feature extraction.
+  noemi:
+
+    # Barrier map for assigning barrier numbers to phase numbers in configuration data.
+    barrier_map:
+      1: 2
+      6: 2 
+      2: 2
+      5: 2
+      3: 1
+      8: 1
+      4: 1
+      7: 1
+
+

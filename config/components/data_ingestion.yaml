@@ -1,0 +1,78 @@
+# ----------------------------
+# Data Ingestion Configuration
+# ----------------------------
+# Configurations for various data ingestion processes, 
+
+data_scraping: # Settings for scraping data from NOEMI reports and ATSPM event data from Sunstore.
+  
+  # Time (in seconds) to wait for pages to fully load before interacting with elements.
+  wait_time: 5
+
+  # List of supported web browsers for scraping data.
+  # Currently configured to use Chrome only.
+  browser_types:
+    - "chrome"
+  
+
+  # Configuration settings for scraping reports from the NOEMI.
+  noemi: 
+
+    # Base URL template for accessing individual reports. Replace "{}" with the SIIA ID to retrieve the report for a specific intersection.
+    url: "https://noemi.cflsmartroads.com/ssv/report.html?id={}"
+    
+    # List of table IDs within the report to be extracted (identified by inspecting the HTML structure).
+    table_ids:
+      - "intersection"
+      - "controller"
+      - "approach"
+      - "lanes"
+
+
+  # Configuration settings for scraping ATSPM event data from the Sunstore.
+  sunstore:
+
+    # Base URL for accessing the Sunstore portal.
+    url: "https://sunstore.cflsmartroads.com"
+
+    # Maximum number of login attempts allowed for accessing the Sunstore portal.
+    max_attempts: 3
+
+    # Column name in the Sunstore portal table representing the event date.
+    date_column_name: "Date"
+
+    # Column name in the Sunstore portal table containing the download link.
+    link_column_name: "Download
+
+
+
+# data_sorting: # Settings for sorting and organizing raw ATSPM event data from Sunstore.
+s
+
+
+data_preprocessing: # Settings for pre-processing raw NOEMI reports.
+
+  # Settings for pre-processing NOEMI reports
+  noemi:
+
+    # Name of the directory containing the "intersection" and "lane" tables
+    intersection_dir: "intersection"
+    lane_dir: "lanes"
+
+    # Mapping for renaming column names in the "lane" table (by manual review)
+    rename_map:
+      Approach: approach
+      Lane Type: laneType
+      Width: width
+      Length: length
+      Lane No. from Left: laneNoFromLeft
+      Type: type
+      Channel: channelNo
+      Phase: phaseNo
+      Stopbar Distance: stopBarDistance
+      Slot Number: slotNo
+
+
+
+
+
+    
