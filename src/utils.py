@@ -47,7 +47,7 @@ def get_root_directory(marker: str = 'src'):
     )
 
 
-def init_driver(browser_type: str = "chrome", download_dir: str = None):
+def init_driver(browser_type: str = "chrome", download_dirpath: str = None):
     """
     Initializes a web driver based on the browser type and configures download settings.
     
@@ -55,7 +55,7 @@ def init_driver(browser_type: str = "chrome", download_dir: str = None):
     -----------
     browser_type : str
         Type of the browser. Currently, only "chrome" is supported.
-    download_dir : str, optional
+    download_dirpath : str, optional
         Path to the directory where downloaded files should be saved. If not specified, the browser’s default download path is used.
         
     Returns:
@@ -73,9 +73,9 @@ def init_driver(browser_type: str = "chrome", download_dir: str = None):
         chrome_options = webdriver.ChromeOptions()
 
         # Set Chrome preferences for automatic download if a custom download directory is provided
-        if download_dir:
+        if download_dirpath:
             prefs = {
-                "download.default_directory": download_dir,  # Path where files will be downloaded
+                "download.default_directory": download_dirpath,  # Path where files will be downloaded
                 "download.prompt_for_download": False,       # Disable download prompts
                 "safebrowsing.enabled": True                 # Enable safe browsing for secure downloads
             }
@@ -237,21 +237,20 @@ def create_dict(int_keys=None, str_keys=None, list_keys=None, dict_keys=None):
     return default_dict
 
 
-def load_data(base_dir: str, filename: str, file_type: str = "csv", sub_dirs: list = None):
+def load_data(base_dirpath: str, sub_dirpath: str, filename: str, file_type: str = "csv"):
     """
     Loads a DataFrame from a specified directory and file type.
 
     Parameters:
     -----------
-    base_dir : str
-        The base directory where the data is stored.
+    base_dirpath : str
+        The base directory path within the root directory where the data is stored.
+    sub_dirpath : str
+        The relative path within the base directory for navigating to the file.
     filename : str
         The name of the file (without extension) to load.
     file_type : str, optional
         The type of file to load ("csv" or "pkl" for pickle). Default is "csv".
-    sub_dirs : list, optional
-        List of subdirectories within the base directory to navigate to the file.
-        Example: ["dir1", "dir2"] will access base_dir/dir1/dir2/filename.csv.
 
     Returns:
     --------
@@ -264,13 +263,13 @@ def load_data(base_dir: str, filename: str, file_type: str = "csv", sub_dirs: li
         If the specified file does not exist or an unsupported file type is provided.
     """
     try:
-        # Construct the full file path
-        file_dir = os.path.join(base_dir, *sub_dirs) if sub_dirs else base_dir
-        filepath = os.path.join(file_dir, f"{filename}.{file_type}")
+        # Combine ROOT_DIR with base_dirpath and sub_dirpath to form the full file path
+        file_dirpath = os.path.join(get_root_directory(), base_dirpath, sub_dirpath)
+        filepath = os.path.join(file_dirpath, f"{filename}.{file_type}")
 
         # Check if the file exists
         if not os.path.exists(filepath):
-            raise CustomException(f"File not found: {filepath}")
+            raise CustomException(custom_message=f"File {filepath} not found", sys_module=sys)
 
         # Load the file based on the file type
         if file_type == "csv":
@@ -278,15 +277,17 @@ def load_data(base_dir: str, filename: str, file_type: str = "csv", sub_dirs: li
         elif file_type == "pkl":
             df = pd.read_pickle(filepath)
         else:
-            raise CustomException(f"Unsupported file type: {file_type}. Choose 'csv' or 'pkl'.")
+            raise CustomException(custom_message=f"Unsupported file type: {file_type}. Choose 'csv' or 'pkl'.", 
+                                  sys_module=sys)
         
         return df
 
     except Exception as e:
-        raise CustomException(f"Unexpected error while loading data: {str(e)}", sys_module=sys)
+        raise CustomException(custom_message=f"Unexpected error while loading data: {str(e)}", 
+                              sys_module=sys)
 
 
-def export_data(df: pd.DataFrame, base_dir: str, filename: str, file_type: str = "csv", sub_dirs: list = None):
+def export_data(df: pd.DataFrame, base_dirpath: str, sub_dirpath: str, filename: str, file_type: str = "csv"):
     """
     Exports a DataFrame to a specified directory and file type.
 
@@ -294,15 +295,14 @@ def export_data(df: pd.DataFrame, base_dir: str, filename: str, file_type: str =
     -----------
     df : pd.DataFrame
         The DataFrame to export.
-    base_dir : str
-        The base directory where the data should be saved.
+    base_dirpath : str
+        The base directory path within the root directory for saving the data.
+    sub_dirpath : str
+        The relative path within the base directory where the file will be saved.
     filename : str
         The name of the file (without extension) for the exported data.
     file_type : str, optional
         The type of file to save ("csv" or "pkl" for pickle). Default is "csv".
-    sub_dirs : list, optional
-        List of subdirectories within the base directory to save the file.
-        Example: ["dir1", "dir2"] will save the file to base_dir/dir1/dir2/filename.csv.
 
     Raises:
     -------
@@ -310,10 +310,10 @@ def export_data(df: pd.DataFrame, base_dir: str, filename: str, file_type: str =
         If an unsupported file type is provided or any error occurs during export.
     """
     try:
-        # Construct the full file path and create subdirectories if needed
-        file_dir = os.path.join(base_dir, *sub_dirs) if sub_dirs else base_dir
-        os.makedirs(file_dir, exist_ok=True)
-        filepath = os.path.join(file_dir, f"{filename}.{file_type}")
+        # Construct the full file path by combining ROOT_DIR, base_dirpath, and sub_dirpath
+        file_dirpath = os.path.join(get_root_directory(), base_dirpath, sub_dirpath)
+        os.makedirs(file_dirpath, exist_ok=True)
+        filepath = os.path.join(file_dirpath, f"{filename}.{file_type}")
 
         # Export the data based on the file type
         if file_type == "csv":
@@ -321,10 +321,13 @@ def export_data(df: pd.DataFrame, base_dir: str, filename: str, file_type: str =
         elif file_type == "pkl":
             df.to_pickle(filepath)
         else:
-            raise CustomException(f"Unsupported file type: {file_type}. Choose 'csv' or 'pkl'.")
+            raise CustomException(custom_message=f"Unsupported file type: {file_type}. Choose 'csv' or 'pkl'.", 
+                                  sys_module=sys)
 
     except Exception as e:
-        raise CustomException(f"Unexpected error while exporting data: {str(e)}", sys_module=sys)
+        raise CustomException(custom_message=f"Unexpected error while exporting data: {str(e)}", 
+                              sys_module=sys)
+
 
 
 

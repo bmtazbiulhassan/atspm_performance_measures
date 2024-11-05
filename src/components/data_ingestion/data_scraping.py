@@ -13,6 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from src.exception import CustomException
 from src.logger import logging
+from src.config import DataIngestionDirpath, get_relative_base_dirpath
 from src.utils import get_root_directory, init_driver, export_data
 from dotenv import load_dotenv
 
@@ -23,12 +24,10 @@ load_dotenv()
 # Get the root directory of the project
 root_dir = get_root_directory()
 
-# Load the YAML configuration file (using absolute path)
-with open(os.path.join(root_dir, "config.yaml"), "r") as file:
-    config = yaml.safe_load(file)
 
-# Retrive relative base dir
-relative_raw_base_dir = config["relative_base_dir"]["raw"]
+# Load the YAML configuration file (using absolute path)
+with open(os.path.join(root_dir, "config/components", "data_ingestion.yaml"), "r") as file:
+    config = yaml.safe_load(file)
 
 # Retrieve settings for data scraping
 config = config["data_scraping"]
@@ -38,6 +37,13 @@ wait_time = config["wait_time"]
 
 # Retrieve list of supported web browsers for scraping data
 browser_types = config["browser_types"]
+
+
+# Instantiate class to get directory paths
+data_ingestion_dirpath = DataIngestionDirpath()
+
+# Get relative base directory path for raw data
+relative_raw_database_dirpath, _, _ = get_relative_base_dirpath()
 
 
 def scrape_noemi_report(signal_id: str, siia_id: str):
@@ -72,7 +78,6 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
 
         # Load configuration settings for tables and export sub-directories
         table_ids = config["noemi"]["table_ids"]
-        report_export_sub_dirs = config["noemi"]["report_export_sub_dirs"]
 
         # Open the report URL and wait for page to load
         driver.get(url)
@@ -96,17 +101,18 @@ def scrape_noemi_report(signal_id: str, siia_id: str):
 
                 logging.info(f"Extracted data for table '{table_id}' from NOEMI report for SIIA ID: {siia_id}")
 
-                # Revise export sub-directories based on table IDs
-                report_export_sub_dirs = report_export_sub_dirs + [f"{table_id}"]
+                # Path (from database directory) to directory where scraped tables from NOEMI reports will be exported
+                raw_report_dirpath, _ = data_ingestion_dirpath.get_data_scraping_dirpath(table_id=table_id)
 
                 # Export as CSV file
                 export_data(df=df_report_id, 
-                            base_dir=os.path.join(root_dir, relative_raw_base_dir), 
+                            base_dirpath=os.path.join(root_dir, relative_raw_database_dirpath), 
+                            sub_dirpath=raw_report_dirpath,
                             filename=f"{signal_id}", 
-                            file_type="csv", 
-                            sub_dirs=report_export_sub_dirs)
+                            file_type="csv")
 
-                report_filepath = os.path.join(root_dir, report_export_sub_dirs, *report_export_sub_dirs, f"{signal_id}.csv")
+                report_filepath = os.path.join(root_dir, relative_raw_database_dirpath, raw_report_dirpath, 
+                                               f"{signal_id}.csv")
 
                 # Log the file saving operation and its path
                 logging.info(f"Saved NOEMI report data to {report_filepath}")
@@ -162,17 +168,16 @@ def scrape_event_data(day: int, month: int, year: int):
             sys_module=sys
         )
 
-    # Retrieve export sub-directories to store event data and revise based on date and month
-    event_export_sub_dirs = config["sunstore"]["event_export_sub_dirs"]
-    event_export_sub_dirs = event_export_sub_dirs + [f"{year}-{month:02d}"]
-    
-    # Absolute path to event export directory
-    event_export_dir = os.path.join(root_dir, relative_raw_base_dir, *event_export_sub_dirs)
+    # Path (from database directory) to directory where ATSPM event data scraped from Sunstore will be exported
+    _, raw_event_dirpath = data_ingestion_dirpath.get_data_scraping_dirpath(month=month, year=year)
+
+    # Absolute directory path to export event data
+    event_dirpath = os.path.join(root_dir, relative_raw_database_dirpath, raw_event_dirpath)
 
     driver = None
     # Initialize a browser driver for each browser type in sequence until successful
     for browser_type in browser_types:
-        driver = init_driver(browser_type=browser_type, download_dir=event_export_dir)
+        driver = init_driver(browser_type=browser_type, download_dirpath=event_dirpath)
         if driver:
             logging.info(f"{browser_type.capitalize()} driver initialized successfully.")
             break  # Continue with scraping if a driver is successfully initialized
@@ -284,7 +289,7 @@ def scrape_event_data(day: int, month: int, year: int):
                         time.sleep(wait_time)
                         
                         # Wait for the download to complete
-                        wait_for_download_completion(download_dir=event_export_dir)  
+                        wait_for_download_completion(download_dirpath=event_dirpath)  
 
                         logging.info("Download completed")
                         break  # Exit loop after clicking the download link
@@ -304,21 +309,21 @@ def scrape_event_data(day: int, month: int, year: int):
             driver.quit()
 
 
-def wait_for_download_completion(download_dir: str):
+def wait_for_download_completion(download_dirpath: str):
     """
     Waits until all downloads in the specified directory are complete by checking for any files with the `.crdownload` extension.
     
     Parameters:
     -----------
-    download_dir : str
-        Absolute directory path where files are being downloaded.
+    download_dirpath : str
+        Path to directory where files are being downloaded.
         
     Returns:
     --------
     None
     """
     # Continuously check for incomplete downloads in the specified directory
-    while any(filename.endswith('.crdownload') for filename in os.listdir(download_dir)):
+    while any(filename.endswith('.crdownload') for filename in os.listdir(download_dirpath)):
         time.sleep(wait_time)  # Check every second if downloads have completed
 
 

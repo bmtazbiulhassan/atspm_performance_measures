@@ -7,6 +7,7 @@ import os
 
 from src.exception import CustomException
 from src.logger import logging
+from src.config import FeatureExtractionDirpath, get_relative_base_dirpath
 from src.utils import get_root_directory, get_column_name_by_partial_name, get_single_unique_value, create_dict, load_data, export_data
 from src.components.feature_extraction.feature_extraction import CoreEventUtils
 
@@ -15,15 +16,19 @@ from src.components.feature_extraction.feature_extraction import CoreEventUtils
 root_dir = get_root_directory()
 
 # Load the YAML configuration file (using absolute path)
-with open(os.path.join(root_dir, "config.yaml"), "r") as file:
+with open(os.path.join(root_dir, "config/components", "feature_extraction.yaml"), "r") as file:
     config = yaml.safe_load(file)
-
-# Retrive relative base dir
-relative_interim_base_dir = config["relative_base_dir"]["interim"]
-relative_production_base_dir = config["relative_base_dir"]["production"]
 
 # Retrieve settings for data quality check
 config = config["data_quality_check"]
+
+
+# Instantiate class to get directory paths
+feature_extraction_dirpath = FeatureExtractionDirpath()
+
+# Get relative base directory path for raw data
+_, relative_interim_database_dirpath, relative_production_database_dirpath = get_relative_base_dirpath()
+
 
 # Instantiate the CoreEventUtils class for event utility methods
 core_event_utils = CoreEventUtils()
@@ -40,13 +45,6 @@ class DataQualityCheck:
             Type of event sequence to check ('vehicle_signal' or 'vehicle_traffic').
         """
         self.event_type = event_type
-        
-        # Retrieve event import and check export sub-directories
-        self.event_import_sub_dirs = config["sunstore"]["event_import_sub_dirs"]
-        self.check_export_sub_dirs = config["sunstore"]["check_export_sub_dirs"]
-
-        # Retrieve config import sub-directories
-        self.config_import_sub_dirs = config["noemi"]["event_import_sub_dirs"]
 
     def check_data_quality(self, signal_ids: list,day: int, month: int, year: int):
         """
@@ -69,30 +67,27 @@ class DataQualityCheck:
         """
         try:
             for signal_id in tqdm.tqdm(signal_ids):
-                # Revise event import sub-directories based on signal id
-                event_import_sub_dirs = self.event_import_sub_dirs + [f"{signal_id}"]
+                # Path (from database directory) to directory where sorted event and signal configuration data are stored
+                interim_event_dirpath, interim_config_dirpath, _ = feature_extraction_dirpath.get_data_quality_check_dirpath(signal_id=signal_id)
 
-                # Absolute path to event import directory
-                event_import_dir = os.path.join(root_dir, relative_interim_base_dir, *event_import_sub_dirs)
+                # Absolute directory path to stored sorted event data
+                event_dirpath = os.path.join(root_dir, relative_interim_database_dirpath, interim_event_dirpath)
 
-                if not os.path.isdir(event_import_dir):
+                if not os.path.isdir(event_dirpath):
                     continue
-
-                # Load configuration and event data for the current signal ID
-                config_filepath = os.path.join(root_dir, self.relative_config_import_dir, f"{signal_id}.csv")
 
                 try:
                     # Load event data
-                    df_event_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                    df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
+                                            sub_dirpath= interim_event_dirpath,
                                             filename=f"{year}-{month:02d}-{day:02d}", 
-                                            file_type="pkl", 
-                                            sub_dirs=event_import_sub_dirs)
+                                            file_type="pkl")
 
                     # Load signal configuraiton data
-                    df_config_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+                    df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
+                                             sub_dirpath=interim_config_dirpath, 
                                              filename=f"{signal_id}",
-                                             file_type="csv", 
-                                             sub_dirs=self.config_import_sub_dirs)
+                                             file_type="csv")
                     
                 except FileNotFoundError as e:
                     logging.error(f"File not found: {e}")
@@ -162,12 +157,15 @@ class DataQualityCheck:
                 # Add date information
                 df_quality_check_id["date"] = pd.Timestamp(f"{year}-{month}-{day}").date()
 
+                # Path (from database directory) to directory where sorted event and signal configuration data are stored
+                _, _, production_check_dirpath = feature_extraction_dirpath.get_data_quality_check_dirpath(event_type=self.event_type)
+
                 # Save the quality check report as a CSV file in the export directory
                 export_data(df=df_quality_check_id, 
-                            base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                            base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                            sub_dirpath=production_check_dirpath,
                             filename=f"{signal_id}", 
-                            file_type="csv", 
-                            sub_dirs=self.check_export_sub_dirs + [self.event_type])
+                            file_type="csv")
 
         except Exception as e:
             logging.error("Error in check_data_quality function")

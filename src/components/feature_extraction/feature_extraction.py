@@ -1,29 +1,39 @@
 import pandas as pd
+import numpy as np
 import yaml
+import tqdm
 import sys
 import os
 
 from src.exception import CustomException
 from src.logger import logging
+from src.config import FeatureExtractionDirpath, get_relative_base_dirpath
 from src.utils import get_root_directory, get_column_name_by_partial_name, float_to_int, load_data, export_data
 
 
 # Get the root directory of the project
 root_dir = get_root_directory()
 
+
 # Load the YAML configuration file (using absolute path)
-with open(os.path.join(root_dir, "config.yaml"), "r") as file:
+with open(os.path.join(root_dir, "config/components", "feature_extraction.yaml"), "r") as file:
     config = yaml.safe_load(file)
 
-# Retrive relative base dir
-relative_interim_base_dir = config["relative_base_dir"]["interim"]
-relative_production_base_dir = config["relative_base_dir"]["production"]
-
-# Retrieve settings for feature extraction
+# Retrieve settings for data quality check
 config = config["feature_extraction"]
 
 
+# Instantiate class to get directory paths
+feature_extraction_dirpath = FeatureExtractionDirpath()
+
+# Get relative base directory path for raw data
+_, relative_interim_database_dirpath, relative_production_database_dirpath = get_relative_base_dirpath()
+
+
 class CoreEventUtils:
+
+    # def mapping_event_sequence(self, df_event: pd.DataFrame, dict_map):
+    #     pass
     
     def filter_by_event_sequence(self, df_event: pd.DataFrame, event_sequence: list):
         """
@@ -209,13 +219,7 @@ class TrafficSignalProfile(CoreEventUtils):
             Year of the desired date (e.g., 2024).
         """
         self.day = day; self.month = month; self.year = year
-        
-        # Retrieve event import and signal export sub-directories
-        self.event_import_sub_dirs = config["sunstore"]["event_import_sub_dirs"]
-        self.signal_export_sub_dirs = config["sunstore"]["signal_export_sub_dirs"]
 
-        # Retrieve config import sub-directories
-        self.config_import_sub_dirs = config["noemi"]["event_import_sub_dirs"]
 
     def add_barrier_no(self, signal_id: str):
         """
@@ -231,23 +235,28 @@ class TrafficSignalProfile(CoreEventUtils):
         pd.DataFrame
             Configuration DataFrame with barrier numbers.
         """
+        # Path (from database directory) to directory where signal configuration data is stored
+        _, interim_config_dirpath, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath()
+
         # Load configuration data for the specific signal
-        df_config_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+        df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
+                                 sub_dirpath=interim_config_dirpath,
                                  filename=f"{signal_id}",
-                                 file_type="csv", 
-                                 sub_dirs=self.config_import_sub_dirs)
+                                 file_type="csv")
 
         # Convert columns with float values to integer type where applicable
         df_config_id = float_to_int(df_config_id)
 
-        # Dynamically fetch the phase column name based on partial match
-        dict_column_names = {"phase": get_column_name_by_partial_name(df=df_config_id, partial_name="phase")}
+        # Fetch the phase column name based on partial match
+        dict_column_names = {
+            "phase": get_column_name_by_partial_name(df=df_config_id, partial_name="phase")
+            }
         phase_nos = df_config_id[dict_column_names["phase"]].unique().tolist()
 
         # Check if phase numbers in configuration data have corresponding entries in barrier map
         if all(phase_no not in config["noemi"]["barrier_map"].keys() for phase_no in phase_nos):
             raise CustomException(
-                custom_message=f"Barrier map {config["noemi"]["barrier_map"]} is not valid for signal ID {signal_id}", 
+                custom_message=f"Barrier map {config['noemi']['barrier_map']} is not valid for signal ID {signal_id}", 
                 sys_module=sys
             )
 
@@ -280,13 +289,10 @@ class TrafficSignalProfile(CoreEventUtils):
         pd.DataFrame
             DataFrame containing extracted phase data.
         """
-        # Revise event import sub-directories based on signal id
-        event_import_sub_dirs = self.event_import_sub_dirs + [f"{signal_id}"]
-
         # Set event sequence and mapping based on signal type
         if event_type == "vehicle_signal":
             # Mapping event codes to respective phase times
-            event_code_map = {
+            dict_event_code_map = {
                 "greenBegin": 1, "greenEnd": 8,
                 "yellowBegin": 8, "yellowEnd": 10,
                 "redClearanceBegin": 10, "redClearanceEnd": 11
@@ -295,7 +301,7 @@ class TrafficSignalProfile(CoreEventUtils):
 
         elif event_type == "pedestrian_signal":
             # Mapping event codes for pedestrian phases
-            event_code_map = {
+            dict_event_code_map = {
                 "pedestrianWalkBegin": 21, "pedestrianWalkEnd": 22,
                 "pedestrianClearanceBegin": 22, "pedestrianClearanceEnd": 23,
                 "pedestrianDontWalkBegin": 23
@@ -313,11 +319,14 @@ class TrafficSignalProfile(CoreEventUtils):
             # Load and prepare configuration data with barrier numbers if applicable
             df_config_id = self.add_barrier_no(signal_id=signal_id)
 
+            # Path (from database directory) to directory where sorted event data is stored
+            interim_event_dirpath, _, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(signal_id=signal_id)
+
             # Load event data
-            df_event_id = load_data(base_dir=os.path.join(root_dir, relative_interim_base_dir), 
+            df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
+                                    sub_dirpath=interim_event_dirpath, 
                                     filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                                    file_type="pkl", 
-                                    sub_dirs=event_import_sub_dirs)
+                                    file_type="pkl")
 
             # Get column names
             dict_column_names = {
@@ -356,11 +365,11 @@ class TrafficSignalProfile(CoreEventUtils):
                         "phaseNo": phase_no,
                         "correctSequenceFlag": correct_flag,
                         **{key: df_event_sequence[df_event_sequence[dict_column_names["code"]] == code][dict_column_names["time"]].iloc[0]
-                           if code in current_event_sequence else pd.NaT for key, code in event_code_map.items()}
+                           if code in current_event_sequence else pd.NaT for key, code in dict_event_code_map.items()}
                     }
                     
                     # Conditionally add "barrierNo" if the signal type is "vehicle"
-                    if event_type == "vehicle":
+                    if event_type == "vehicle_signal":
                         dict_phase_profile_id["barrierNo"] = config["noemi"]["barrier_map"].get(int(phase_no), 0)
 
                     phase_profile_id.append(dict_phase_profile_id)
@@ -370,22 +379,27 @@ class TrafficSignalProfile(CoreEventUtils):
 
             # Create a pseudo timestamp for sorting
             time_columns = [column for column in df_phase_profile_id.columns if column.endswith("Begin") or column.endswith("End")]
-            df_phase_profile_id["pseudoTimestamp"] = df_phase_profile_id[time_columns].bfill(axis=1).iloc[:, 0]
+            df_phase_profile_id["pseudoTimeStamp"] = df_phase_profile_id[time_columns].bfill(axis=1).iloc[:, 0]
             df_phase_profile_id = df_phase_profile_id.sort_values(by="pseudoTimeStamp").reset_index(drop=True)
             df_phase_profile_id.drop(columns=["pseudoTimeStamp"], inplace=True)
 
             # Add date information
             df_phase_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Revise signal export sub-directories
-            signal_export_sub_dirs = self.signal_export_sub_dirs + ["phase" + f"{event_type}", f"{signal_id}"]
+            # Path (from database directory) to directory where vehicle and pedestrian signal profile will be stored
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                signal_id=signal_id, 
+                resolution_level="phase",
+                event_type=event_type,
+                signal_id=signal_id
+            )
 
             # Save the phase profile data as a pkl file in the export directory
             export_data(df=df_phase_profile_id, 
-                        base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                        sub_dirpath=production_signal_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                        file_type="pkl", 
-                        sub_dirs=signal_export_sub_dirs)
+                        file_type="pkl")
 
             return df_phase_profile_id
 
@@ -480,17 +494,19 @@ class TrafficSignalProfile(CoreEventUtils):
             DataFrame containing the vehicle cycle profile.
         """
         try:
-            # Define the file path for the vehicle phase data of the specified signal and date
-            profile_filepath = os.path.join(
-                root_dir, relative_production_base_dir, *self.signal_export_sub_dirs, "phase", "vehicle_signal", signal_id,
-                f"{self.year}-{self.month:02d}-{self.day:02d}.pkl"
+            # Path (from database directory) to directory where phase-level vehicle signal profile is stored
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                signal_id=signal_id, 
+                resolution_level="phase",
+                event_type="vehicle_signal",
+                signal_id=signal_id
             )
 
-            # Load vehicle phase profile data or extract it if file does not exist
-            if os.path.exists(profile_filepath):
-                df_vehicle_phase_profile_id = pd.read_pickle(profile_filepath)
-            else:
-                df_vehicle_phase_profile_id = self.extract_vehicle_phase_profile(signal_id=signal_id)
+            # Load vehicle phase profile data 
+            df_vehicle_phase_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                                                    sub_dirpath=production_signal_dirpath,
+                                                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                                    file_type="pkl")
 
             # Assign cycle numbers to the phase profile based on the specified start barrier
             df_vehicle_phase_profile_id = self.assign_cycle_nos(df_vehicle_phase_profile=df_vehicle_phase_profile_id, start_barrier_no=start_barrier_no)
@@ -525,42 +541,43 @@ class TrafficSignalProfile(CoreEventUtils):
                 for phase_no in sorted(df_vehicle_phase_profile_cycle["phaseNo"].unique()):
                     # Filter data for the current phase
                     df_vehicle_phase_profile_phase = df_vehicle_phase_profile_cycle[df_vehicle_phase_profile_cycle["phaseNo"] == phase_no]
+                    df_vehicle_phase_profile_phase = df_vehicle_phase_profile_phase.reset_index(drop=True)
 
                     # Initialize phase time columns with NaT for the current phase
                     dict_vehicle_cycle_profile_id.update(
-                        {f"{signal_time_type}Phase{phase_no}": [pd.NaT] for signal_time_type in ["green", "yellow", "redClearance", "red"]}
+                        {f"{signal_type}Phase{phase_no}": [pd.NaT] for signal_type in ["green", "yellow", "redClearance", "red"]}
                     )
 
                     # Initialize dictionary to store signal times for each phase
-                    dict_signal_times = {
-                        signal_time_type: [] for signal_time_type in ["green", "yellow", "redClearance", "red"]
+                    dict_signal_types = {
+                        signal_type: [] for signal_type in ["green", "yellow", "redClearance", "red"]
                     }
 
                     # Collect start and end times for green, yellow, and redClearance for each phase 
                     for idx in range(df_vehicle_phase_profile_phase.shape[0]):
-                        dict_signal_times["green"].append(
+                        dict_signal_types["green"].append(
                             tuple([df_vehicle_phase_profile_phase.loc[idx, "greenBegin"], df_vehicle_phase_profile_phase.loc[idx, "greenEnd"]])
                             )
-                        dict_signal_times["yellow"].append(
+                        dict_signal_types["yellow"].append(
                             tuple([df_vehicle_phase_profile_phase.loc[idx, "yellowBegin"], df_vehicle_phase_profile_phase.loc[idx, "yellowEnd"]])
                             )
-                        dict_signal_times["redClearance"].append(
+                        dict_signal_types["redClearance"].append(
                             tuple([df_vehicle_phase_profile_phase.loc[idx, "redClearanceBegin"], df_vehicle_phase_profile_phase.loc[idx, "redClearanceEnd"]])
                             )
 
                     # Sort all phase time intervals in order
-                    signal_times = [tuple([cycle_begin])] + dict_signal_times["green"] + dict_signal_times["yellow"] + dict_signal_times["redClearance"] + [tuple([cycle_end])]
+                    signal_times = [tuple([cycle_begin])] + dict_signal_types["green"] + dict_signal_types["yellow"] + dict_signal_types["redClearance"] + [tuple([cycle_end])]
                     signal_times = sorted(signal_times, key=lambda x: x[0])
                     
                     # Generate 'red' intervals by identifying gaps between sorted intervals
                     for start, end in zip(signal_times[:-1], signal_times[1:]):
                         if start[-1] == end[0]:
                             continue
-                        dict_signal_times["red"].append((start[-1], end[0]))
+                        dict_signal_types["red"].append((start[-1], end[0]))
 
                     # Update cycle information dictionary with collected signal times for each type
-                    for signal_time_type in ["green", "yellow", "redClearance", "red"]:
-                        dict_vehicle_cycle_profile_id[f"{signal_time_type}Phase{phase_no}"] = dict_signal_times[signal_time_type]
+                    for signal_type in ["green", "yellow", "redClearance", "red"]:
+                        dict_vehicle_cycle_profile_id[f"{signal_type}Phase{phase_no}"] = dict_signal_types[signal_type]
 
                 # Append the current cycle information to the cycle profile DataFrame
                 df_vehicle_cycle_profile_id = pd.concat([df_vehicle_cycle_profile_id, pd.DataFrame([dict_vehicle_cycle_profile_id])], 
@@ -572,15 +589,20 @@ class TrafficSignalProfile(CoreEventUtils):
             # Add date information to the DataFrame
             df_vehicle_cycle_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Revise signal export sub-directories
-            signal_export_sub_dirs = self.signal_export_sub_dirs + ["cycle" + "vehicle_signal", f"{signal_id}"]
+            # Path (from database directory) to directory where cycle-level vehicle signal profile will be stored
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                signal_id=signal_id, 
+                resolution_level="cycle",
+                event_type="vehicle_signal",
+                signal_id=signal_id
+            )
 
             # Save the phase profile data as a pkl file in the export directory
             export_data(df=df_vehicle_cycle_profile_id, 
-                        base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                        sub_dirpath=production_signal_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                        file_type="pkl", 
-                        sub_dirs=signal_export_sub_dirs)
+                        file_type="pkl")
 
             return df_vehicle_cycle_profile_id
 
@@ -603,31 +625,34 @@ class TrafficSignalProfile(CoreEventUtils):
             DataFrame containing the pedestrian cycle profile data.
         """
         try:
-            # Define the file path for the pedestrian phase data of the specified signal and date
-            profile_filepath = os.path.join(
-                root_dir, relative_production_base_dir, *self.signal_export_sub_dirs, "phase", "pedestrian_signal", signal_id,
-                f"{self.year}-{self.month:02d}-{self.day:02d}.pkl"
+            # Path (from database directory) to directory where phase-level pedestrian signal profile is stored
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                signal_id=signal_id, 
+                resolution_level="phase",
+                event_type="pedestrian_signal",
+                signal_id=signal_id
             )
 
-            # Load pedestrian phase profile data if it exists, otherwise extract it
-            if os.path.exists(profile_filepath):
-                df_pedestrian_phase_profile_id = pd.read_pickle(profile_filepath)
-            else:
-                df_pedestrian_phase_profile_id = self.extract_pedestrian_cycle_profile(signal_id=signal_id)
-
-            # Define the file path for the vehicle cycle data of the specified signal and date
-            profile_filepath = os.path.join(
-                root_dir, relative_production_base_dir, *self.signal_export_sub_dirs, "cycle", "vehicle_signal", signal_id,
-                f"{self.year}-{self.month:02d}-{self.day:02d}.pkl"
+            # Load pedestrian phase profile data 
+            df_pedestrian_phase_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                                                       sub_dirpath=production_signal_dirpath, 
+                                                       filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                                       file_type="pkl")
+            
+            # Path (from database directory) to directory where cycle-level vehicle signal profile is stored
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                signal_id=signal_id, 
+                resolution_level="cycle",
+                event_type="vehicle_signal",
+                signal_id=signal_id
             )
-
-            # Load vehicle cycle profile data if it exists, otherwise extract it
-            if os.path.exists(profile_filepath):
-                df_vehicle_cycle_profile_id = pd.read_pickle(profile_filepath)
-            else:
-                df_vehicle_cycle_profile_id = self.extract_vehicle_cycle_profile(signal_id=signal_id)
-
-
+            
+            # Load vehicle cycle profile data 
+            df_vehicle_cycle_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                                                    sub_dirpath=production_signal_dirpath, 
+                                                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                                    file_type="pkl")
+            
             # Keep only rows with a correct pedestrian event sequence (21, 22, 23)
             df_pedestrian_phase_profile_id = df_pedestrian_phase_profile_id[df_pedestrian_phase_profile_id["correctSequenceFlag"] == 1]
             df_pedestrian_phase_profile_id = df_pedestrian_phase_profile_id.reset_index(drop=True)
@@ -652,15 +677,20 @@ class TrafficSignalProfile(CoreEventUtils):
             # Add date information to the DataFrame
             df_pedestrian_cycle_profile_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Revise signal export sub-directories
-            signal_export_sub_dirs = self.signal_export_sub_dirs + ["cycle" + "pedestrian_signal", f"{signal_id}"]
+            # Path (from database directory) to directory where cycle-level pedestrian signal profile will be stored
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                signal_id=signal_id, 
+                resolution_level="cycle",
+                event_type="pedestrian_signal",
+                signal_id=signal_id
+            )
 
             # Save the phase profile data as a pkl file in the export directory
             export_data(df=df_pedestrian_cycle_profile_id, 
-                        base_dir=os.path.join(root_dir, relative_production_base_dir), 
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                        sub_dirpath=production_signal_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                        file_type="pkl", 
-                        sub_dirs=signal_export_sub_dirs)
+                        file_type="pkl")
 
             return df_pedestrian_cycle_profile_id
 
@@ -671,6 +701,544 @@ class TrafficSignalProfile(CoreEventUtils):
                 custom_message=f"Error extracting pedestrian cycle profile for signal ID {signal_id}: {e}",
                 sys_module=sys
             )
+        
+
+class SPATFeatureExtract(CoreEventUtils):
+
+    def __init__(self):
+        def __init__(self, day: int, month: int, year: int):
+            """
+            Initialize the class with day, month, and year of the date to process.
+
+            Parameters:
+            -----------
+            day : int
+                Day of the desired date (1-31).
+            month : int
+                Month of the desired date (1-12).
+            year : int
+                Year of the desired date (e.g., 2024).
+            """
+            self.day = day; self.month = month; self.year = year
+
+    def spat(self, signal_id: str):
+        # Path (from database directory) to directory where cycle-level vehicle signal profile is stored
+        _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            signal_id=signal_id, 
+            resolution_level="cycle",
+            event_type="vehicle_signal",
+            signal_id=signal_id
+        )
+        
+        # Load vehicle cycle profile data 
+        df_vehicle_cycle_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                                                sub_dirpath=production_signal_dirpath, 
+                                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                                file_type="pkl")
+        # list of signals
+        signal_types = ['green', 'yellow', 'redClearance', 'red']
+        
+        # initialize dataframe to store phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
+        df_spat_id = pd.DataFrame() # stratio: signal (i.e., 'green', 'yellow', 'redClearance', and 'red') ratio
+        
+        # loop through each cycle to calculate and update phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
+        for i in range(len(df_vehicle_cycle_profile_id)):
+            # extract signal info: cycle
+            signal_id = df_vehicle_cycle_profile_id.signalID[i]; cycle_no = df_vehicle_cycle_profile_id.cycleNo[i]
+            cycle_begin = df_vehicle_cycle_profile_id.cycleBegin[i]; cycle_end = df_vehicle_cycle_profile_id.cycleEnd[i]
+            cycle_length = df_vehicle_cycle_profile_id.cycleLength[i]
+        
+            # initialize a dictionary with signal info: cycle
+            dict_spat = {'signalID': '0', 'cycleNo': 0, 'cycleBegin': pd.NaT, 'cycleEnd': pd.NaT, 'cycleLength': 0} 
+        
+            # get list of unique phase nos from columns
+            phase_nos = [int(column[-1]) for column in df_vehicle_cycle_profile_id.columns if "Phase" in column]
+        
+            # update dictionary to hold phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
+            for phase_no in phase_nos:
+                dict_spat.update(
+                    {f'greenRatioPhase{phase_no}': 0, 
+                     f'yellowRatioPhase{phase_no}': 0, 
+                     f'redClearanceRatioPhase{phase_no}': 0, f'redRatioPhase{phase_no}': 0}
+                )
+        
+            # add signal info: cycle
+            dict_spat['signalID'] = signal_id; dict_spat['cycleNo'] = cycle_no
+            dict_spat['cycleBegin'] = cycle_begin; dict_spat['cycleEnd'] = cycle_end
+            dict_spat['cycleLength'] = cycle_length
+        
+            # intialize dictionary to temporarily add signal times of every phase
+            dict_signal_types = {'green': [], 'yellow': [], 'redClearance': [], 'red': []}
+            
+            # loop through phase nos to extract phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio
+            for phase_no in phase_nos:
+                # get red times
+                dict_signal_types['red'] = df_vehicle_cycle_profile_id.loc[i, f'redPhase{phase_no}']
+
+                # check if the instance is not list (if not, convert to list)
+                if not isinstance(dict_signal_types['red'], list):
+                    dict_signal_types['red'] = [dict_signal_types['red']]
+        
+                # if there's no red time for the given phase, then there's also no green time for the given phase
+                if (dict_signal_types['red'] == [pd.NaT]) or (dict_signal_types['red'] == [np.nan]):
+                    # loop through signals to add phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
+                    for signal_type in signal_types:
+                        # add 1 when signal is red, else 0
+                        if signal_type == 'red':
+                            dict_spat[f'{signal_type}RatioPhase{phase_no}'] = 1  
+                        else:
+                            dict_spat[f'{signal_type}RatioPhase{phase_no}'] = 0
+        
+                    # after adding continue (to proceed to next phase in the loop)
+                    continue
+        
+                
+                # get green, yellow, and red clearance times
+                dict_signal_types['green'] = df_vehicle_cycle_profile_id.loc[i, f'greenPhase{phase_no}']
+                dict_signal_types['yellow'] = df_vehicle_cycle_profile_id.loc[i, f'yellowPhase{phase_no}']
+                dict_signal_types['redClearance'] = df_vehicle_cycle_profile_id.loc[i, f'redClearancePhase{phase_no}']
+        
+                # get and add phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
+                for signal_type in signal_types:
+                    # check if the instance is not list (if not, convert to list)
+                    if not isinstance(dict_signal_types[f'{signal_type}'], list):
+                        dict_signal_types[f'{signal_type}'] = [dict_signal_types[f'{signal_type}']]
+                        
+                    # intialize variable to store time difference 
+                    time_diff = 0
+
+                    # loop through signal times (format: [(start, end), (start, end), ..., (start, end)]
+                    for start_time, end_time in dict_signal_types[f'{signal_type}']:
+                        # calculate and store time difference in seconds
+                        time_diff += (end_time - start_time).total_seconds()
+        
+                    # calcuate and store signal ratio
+                    dict_spat[f'{signal_type}RatioPhase{phase_no}'] = round(time_diff / cycle_length, 4)
+        
+            
+            # concatenate phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle 
+            df_spat_id = pd.concat([df_spat_id, pd.DataFrame([dict_spat])], axis=0, ignore_index=True)  
+
+
+        # Path (from database directory) to directory where cycle-level vehicle signal feature (spat) will be stored
+        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            signal_id=signal_id, 
+            resolution_level="cycle",
+            event_type="vehicle_signal",
+            feature_name="spat",
+            signal_id=signal_id
+        )
+
+        # Save the phase profile data as a pkl file in the export directory
+        export_data(df=df_spat_id, 
+                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                    sub_dirpath=production_feature_dirpath,
+                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                    file_type="pkl")
+
+        return df_spat_id  
+
+
+class TrafficFeatureExtract(CoreEventUtils):
+
+    def __init__(self, day: int, month: int, year: int):
+        """
+        Initialize the class with day, month, and year of the date to process.
+
+        Parameters:
+        -----------
+        day : int
+            Day of the desired date (1-31).
+        month : int
+            Month of the desired date (1-12).
+        year : int
+            Year of the desired date (e.g., 2024).
+        """
+        self.day = day; self.month = month; self.year = year 
+
+    def red_light_running(self, signal_id: str):
+        # Path (from database directory) to directory where sorted event data is stored
+        interim_event_dirpath, _, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(signal_id=signal_id)
+
+        # Load event data
+        df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
+                                sub_dirpath=interim_event_dirpath, 
+                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                file_type="pkl")
+        
+        # Path (from database directory) to directory where signal configuration data is stored
+        _, interim_config_dirpath, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath()
+
+        # Load configuration data for the specific signal
+        df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
+                                 sub_dirpath=interim_config_dirpath,
+                                 filename=f"{signal_id}",
+                                 file_type="csv")
+        
+        # Path (from database directory) to directory where cycle-level vehicle signal profile is stored
+        _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            signal_id=signal_id, 
+            resolution_level="cycle",
+            event_type="vehicle_signal",
+            signal_id=signal_id
+        )
+        
+        # Load vehicle cycle profile data 
+        df_vehicle_cycle_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                                                sub_dirpath=production_signal_dirpath, 
+                                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                                file_type="pkl")
+        
+        # Filter event data for event codes 81: detector 'off'
+        df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81])
+
+        # Get column names
+        dict_column_names = {
+            "count": get_column_name_by_partial_name(df=df_config_id, partial_name="count"),
+            "movement": get_column_name_by_partial_name(df=df_config_id, partial_name="movement"),
+
+            "phase": get_column_name_by_partial_name(df=df_config_id, partial_name="phase"),
+            "channel": get_column_name_by_partial_name(df=df_config_id, partial_name="count"),
+            "signalID": get_column_name_by_partial_name(df=df_config_id, partial_name="signal"),
+            
+            "time": get_column_name_by_partial_name(df=df_event_id, partial_name="time"),
+            "param": get_column_name_by_partial_name(df=df_event_id, partial_name="param")
+            }
+
+        # Keep detector info for only the count bar 
+        df_config_id = df_config_id[df_config_id[dict_column_names["count"]] == 1]
+        df_config_id = df_config_id[df_config_id[dict_column_names["movement"]].isin(["L", "T"])].reset_index(drop=True)
+        
+        # Join detector info with event data 
+        df_event_id = pd.merge(df_event_id, df_config_id, 
+                               how="left", 
+                               left_on=[[dict_column_names["signalID"]], dict_column_names["param"]], 
+                               right_on=[dict_column_names["signalID"], dict_column_names["channel"]])
+        
+        # Keep observations when channel no is not na, and reset index
+        df_event_id = df_event_id[pd.notna(df_event_id[dict_column_names["channel"]])]
+        df_event_id = df_event_id.reset_index(drop=True)
+
+        # change dtype
+        df_event_id = float_to_int(df_event_id)
+                
+        # initialize df to store data
+        df_red_light_running_id = pd.DataFrame()
+
+        # loop through all cycles
+        for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+            # extrac signal info: cycle
+            signal_id = df_vehicle_cycle_profile_id["signalID"][i] 
+            cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+            cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+            cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+            cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+        
+            # initialize dictionary
+            dict_red_light_running_id = {
+                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
+                }
+
+            # list all unique phase nos
+            phase_nos = sorted(list(df_event_id[dict_column_names["phase"]].unique()))
+
+            # add features to dictionary
+            for phase_no in phase_nos:
+                dict_red_light_running_id.update(
+                    {f"redClearanceRunCntPhase{phase_no}": [], f"redClearanceRunFlagPhase{phase_no}": 0,
+                    f"redRunCntPhase{phase_no}": [], f"redRunFlagPhase{phase_no}": 0}
+                )
+
+            # filter out all the detector off events within the current cycle, sort, and reset index
+            df_event_cycle = df_event_id[(
+                (df_event_id[dict_column_names["time"]] >= cycle_begin) & 
+                (df_event_id[dict_column_names["time"]] <= cycle_end)
+            )]
+
+            df_event_cycle = df_event_cycle.sort_values(by=[dict_column_names["time"], 
+                                                            dict_column_names["phase"], 
+                                                            dict_column_names["channel"]])
+            df_event_cycle = df_event_cycle.reset_index(drop=True)
+
+            # loop through each phase to determine red light running during red clearance and red signals
+            for phase_no in phase_nos:
+                # filter events specific to the current phase in the given cycle, and reset index
+                df_event_phase = df_event_cycle[df_event_cycle[dict_column_names["phase"]] == phase_no]
+                df_event_phase = df_event_phase.reset_index(drop=True)
+
+                # list all unique channels in the current phase
+                channel_nos = list(df_event_phase[dict_column_names["channel"]].unique())
+
+                # intialize dictionary of columns on the red clearance, and red signal timings of the current phase
+                dict_signal_columns = {
+                    "redClearance": f"redClearancePhase{phase_no}", "red": f"redPhase{phase_no}"
+                } 
+
+                # calculate phase-specific determine red light running during red clearance and red signals based on red clearance, and red signal times of the current phase, and detector off times of the current channel
+                # note: all channels in a given phase experiences the same signal times
+                for key in dict_signal_columns.keys(): # key represents signal (green, yellow, red clearance, and red)
+                    # check if the signal phase time is null
+                    if df_vehicle_cycle_profile_id.loc[i, dict_signal_columns[key]] == [pd.NaT]:
+                        continue
+
+                    # continue if the value is not list i.e., is NaN
+                    if not isinstance(df_vehicle_cycle_profile_id.loc[i, dict_signal_columns[key]], list): # pd.isna(df_vehicle_cycle_profile_id.loc[i, dict_columns[key]])
+                        continue
+                    
+                    # loop through channels 
+                    for channel_no in channel_nos:
+                        # filter events specific to the current channel in the current phase, sort, and reset index
+                        df_event_channel = df_event_phase[df_event_phase[dict_column_names["channel"]] == channel_no]
+                        df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
+                        
+                        # initialize variable to store red light running count value for the current channel
+                        red_light_running_count = 0
+                                
+                        # loop through the signal times
+                        for time_stamps in df_red_light_running_id.loc[i, dict_signal_columns[key]]: # time_stamps format: [(signal start time, signal end time), ......, (signal start time, signal end time)]
+                            # extract start and end signal time 
+                            start_time = time_stamps[0]; end_time = time_stamps[-1]
+
+                            # through through each detector off event for the current channel
+                            for j in range(df_event_channel.shape[0]):
+                                # get the time of the detector off event
+                                time_stamp = df_event_channel.loc[j, "timeStamp"]
+
+                                # if the timestamp for the event is within the start and end time of current signal ("red clearance" or "red"), there"s a red run
+                                if (time_stamp >= start_time) & (time_stamp <= end_time):
+                                    red_light_running_count += 1
+                                
+                        dict_red_light_running_id[f"{key}RunCntPhase{phase_no}"].append(red_light_running_count)
+
+                        # check if all values are not 0, i.e., red running 
+                        if not all(value == 0 for value in dict_red_light_running_id[f"{key}RunCntPhase{phase_no}"]):
+                            dict_red_light_running_id[f"{key}RunFlagPhase{phase_no}"] = 1
+                            
+
+            # update dictionary
+            dict_red_light_running_id["signalID"] = signal_id; dict_red_light_running_id["cycleNo"] = cycle_no
+            dict_red_light_running_id["cycleBegin"] = cycle_begin; dict_red_light_running_id["cycleEnd"] = cycle_end
+            dict_red_light_running_id["cycleLength"] = cycle_length
+        
+            df_red_light_running_id = pd.concat([df_red_light_running_id, pd.DataFrame([dict_red_light_running_id])], 
+                                                 axis=0, ignore_index=True)
+        
+        # Sort the resulting DataFrame by cycle number and phase number
+        df_pedestrian_cycle_profile_id = df_pedestrian_cycle_profile_id.sort_values(by=["cycleNo"]).reset_index(drop=True)
+
+        # Add date information to the DataFrame
+        df_red_light_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+
+        # Revise signal export sub-directories
+        feature_export_sub_dirs = self.feature_export_sub_dirs+ ["red_light_running", f"{signal_id}"]
+
+        # Path (from database directory) to directory where cycle-level vehicle traffic feature (red light running) will be stored
+        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            signal_id=signal_id, 
+            resolution_level="cycle",
+            event_type="vehicle_traffic",
+            feature_name="red_light_running",
+            signal_id=signal_id
+        )
+
+        # Save the phase profile data as a pkl file in the export directory
+        export_data(df=df_red_light_running_id, 
+                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                    sub_dirpath=production_feature_dirpath,
+                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                    file_type="pkl")
+
+        return df_red_light_running_id
+    
+    def dilemma_zone_running(self, signal_id: str):
+        # Path (from database directory) to directory where sorted event data is stored
+        interim_event_dirpath, _, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(signal_id=signal_id)
+
+        # Load event data
+        df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
+                                sub_dirpath=interim_event_dirpath, 
+                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                file_type="pkl")
+        
+        # Path (from database directory) to directory where signal configuration data is stored
+        _, interim_config_dirpath, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath()
+
+        # Load configuration data for the specific signal
+        df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
+                                 sub_dirpath=interim_config_dirpath,
+                                 filename=f"{signal_id}",
+                                 file_type="csv")
+        
+        # Path (from database directory) to directory where cycle-level vehicle signal profile is stored
+        _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            signal_id=signal_id, 
+            resolution_level="cycle",
+            event_type="vehicle_signal",
+            signal_id=signal_id
+        )
+        
+        # Load vehicle cycle profile data 
+        df_vehicle_cycle_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                                                sub_dirpath=production_signal_dirpath, 
+                                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                                file_type="pkl")
+        # Filter event data for event codes 81: detector 'off'
+        df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81])
+
+        # Get column names
+        dict_column_names = {
+            "count": get_column_name_by_partial_name(df=df_config_id, partial_name="count"),
+            "movement": get_column_name_by_partial_name(df=df_config_id, partial_name="movement"),
+
+            "phase": get_column_name_by_partial_name(df=df_config_id, partial_name="phase"),
+            "channel": get_column_name_by_partial_name(df=df_config_id, partial_name="count"),
+            "signalID": get_column_name_by_partial_name(df=df_config_id, partial_name="signal"),
+            
+            "time": get_column_name_by_partial_name(df=df_event_id, partial_name="time"),
+            "param": get_column_name_by_partial_name(df=df_event_id, partial_name="param")
+            }
+
+        # Keep detector info for only the count bar 
+        df_config_id = df_config_id[df_config_id[dict_column_names["count"]] == 1]
+        df_config_id = df_config_id[df_config_id[dict_column_names["movement"]].isin(["L", "T"])].reset_index(drop=True)
+        
+        # Join detector info with event data 
+        df_event_id = pd.merge(df_event_id, df_config_id, 
+                               how="left", 
+                               left_on=[[dict_column_names["signalID"]], dict_column_names["param"]], 
+                               right_on=[dict_column_names["signalID"], dict_column_names["channel"]])
+        
+        # Keep observations when channel no is not na, and reset index
+        df_event_id = df_event_id[pd.notna(df_event_id[dict_column_names["channel"]])]
+        df_event_id = df_event_id.reset_index(drop=True)
+
+        # change dtype
+        df_event_id = float_to_int(df_event_id)
+                
+        # initialize df to store data
+        df_dilemma_zone_running_id = pd.DataFrame()
+
+        # loop through all cycles
+        for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+            # extrac signal info: cycle
+            signal_id = df_vehicle_cycle_profile_id["signalID"][i] 
+            cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+            cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+            cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+            cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+        
+            # initialize dictionary
+            dict_dilemma_zone_running_id = {
+                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
+                }
+
+            # list all unique phase nos
+            phase_nos = sorted(list(df_event_id[dict_column_names["phase"]].unique()))
+
+            # add features to dictionary
+            for phase_no in phase_nos:
+                dict_dilemma_zone_running_id.update(
+                    {f"yellowRunCntPhase{phase_no}": [], f"yellowRunCntPhase{phase_no}": []}
+                    )
+
+            # filter out all the detector off events within the current cycle, sort, and reset index
+            df_event_cycle = df_event_id[(
+                (df_event_id[dict_column_names["time"]] >= cycle_begin) & 
+                (df_event_id[dict_column_names["time"]] <= cycle_end)
+            )]
+
+            df_event_cycle = df_event_cycle.sort_values(by=[dict_column_names["time"], 
+                                                            dict_column_names["phase"], 
+                                                            dict_column_names["channel"]])
+            df_event_cycle = df_event_cycle.reset_index(drop=True)
+
+            # loop through each phase to determine red light running during red clearance and red signals
+            for phase_no in phase_nos:
+                # filter events specific to the current phase in the given cycle, and reset index
+                df_event_phase = df_event_cycle[df_event_cycle[dict_column_names["phase"]] == phase_no]
+                df_event_phase = df_event_phase.reset_index(drop=True)
+
+                # list all unique channels in the current phase
+                channel_nos = list(df_event_phase[dict_column_names["channel"]].unique())
+
+                # intialize dictionary of columns on the red clearance, and red signal timings of the current phase
+                dict_signal_columns = {
+                    "yellow": f"yellowPhase{phase_no}"
+                } 
+
+                # calculate phase-specific determine red light running during red clearance and red signals based on red clearance, and red signal times of the current phase, and detector off times of the current channel
+                # note: all channels in a given phase experiences the same signal times
+                for key in dict_signal_columns.keys(): # key represents signal (green, yellow, red clearance, and red)
+                    # check if the signal phase time is null
+                    if df_vehicle_cycle_profile_id.loc[i, dict_signal_columns[key]] == [pd.NaT]:
+                        continue
+
+                    # continue if the value is not list i.e., is NaN
+                    if not isinstance(df_vehicle_cycle_profile_id.loc[i, dict_signal_columns[key]], list): # pd.isna(df_vehicle_cycle_profile_id.loc[i, dict_columns[key]])
+                        continue
+                    
+                    # loop through channels 
+                    for channel_no in channel_nos:
+                        # filter events specific to the current channel in the current phase, sort, and reset index
+                        df_event_channel = df_event_phase[df_event_phase[dict_column_names["channel"]] == channel_no]
+                        df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
+                        
+                        # initialize variable to store red light running count value for the current channel
+                        dilemma_zone_running_count = 0
+                                
+                        # loop through the signal times
+                        for time_stamps in df_dilemma_zone_running_id.loc[i, dict_signal_columns[key]]: # time_stamps format: [(signal start time, signal end time), ......, (signal start time, signal end time)]
+                            # extract start and end signal time 
+                            start_time = time_stamps[0]; end_time = time_stamps[-1]
+
+                            # through through each detector off event for the current channel
+                            for j in range(df_event_channel.shape[0]):
+                                # get the time of the detector off event
+                                time_stamp = df_event_channel.loc[j, "timeStamp"]
+
+                                # if the timestamp for the event is within the start and end time of current signal ("red clearance" or "red"), there"s a red run
+                                if (time_stamp >= start_time) & (time_stamp <= end_time):
+                                    dilemma_zone_running_count += 1
+                                
+                        dict_dilemma_zone_running_id[f"{key}RunCntPhase{phase_no}"].append(dilemma_zone_running_count)
+
+                        # check if all values are not 0, i.e., red running 
+                        if not all(value == 0 for value in dict_dilemma_zone_running_id[f"{key}RunCntPhase{phase_no}"]):
+                            dict_dilemma_zone_running_id[f"{key}RunFlagPhase{phase_no}"] = 1
+                            
+
+            # update dictionary
+            dict_dilemma_zone_running_id["signalID"] = signal_id; dict_dilemma_zone_running_id["cycleNo"] = cycle_no
+            dict_dilemma_zone_running_id["cycleBegin"] = cycle_begin; dict_dilemma_zone_running_id["cycleEnd"] = cycle_end
+            dict_dilemma_zone_running_id["cycleLength"] = cycle_length
+        
+            df_dilemma_zone_running_id = pd.concat([df_dilemma_zone_running_id, pd.DataFrame([dict_dilemma_zone_running_id])], 
+                                                   axis=0, ignore_index=True)
+        
+        # Sort the resulting DataFrame by cycle number and phase number
+        df_pedestrian_cycle_profile_id = df_pedestrian_cycle_profile_id.sort_values(by=["cycleNo"]).reset_index(drop=True)
+
+        # Add date information to the DataFrame
+        df_dilemma_zone_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+
+        # Path (from database directory) to directory where cycle-level vehicle traffic feature (dilemma zone running) will be stored
+        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            signal_id=signal_id, 
+            resolution_level="cycle",
+            event_type="vehicle_traffic",
+            feature_name="dilemma_zone_running",
+            signal_id=signal_id
+        )
+
+        # Save the phase profile data as a pkl file in the export directory
+        export_data(df=df_dilemma_zone_running_id, 
+                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                    sub_dirpath=production_feature_dirpath,
+                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                    file_type="pkl")
+
+        return df_dilemma_zone_running_id
+
 
 
 
