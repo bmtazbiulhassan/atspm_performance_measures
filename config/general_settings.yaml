@@ -2,6 +2,10 @@
 # General Settings
 # ----------------
 
+# District to process
+district: "fdot_d5"
+
+
 # Relative database directory paths
 relative_database_dirpath:
   raw: "data/raw"
@@ -16,9 +20,9 @@ raw_report_dirpath: "atspm/{district}/noemi_report/{table_id}"
 
 
 # Path (from database directory) to directory containing ATSPM event data scraped from Sunstore.
-raw_event_dirpath: "atspm/{district}/event_data/{year}-{month}-{day}" 
+raw_event_dirpath: "atspm/{district}/event_data/{year}-{month}" 
 # replace "{district}" with "fdot_d5", or "fdot_d7"
-# replace "{year}-{month}-{day}" with year, month, and day of the date of data
+# replace "{year}-{month}" with year, and month of the date of data
 
 
 # Path (from database directory) to directory containing sorted ATSPM event data.
@@ -46,12 +50,12 @@ production_signal_dirpath: "atspm/{district}/feature_extraction/signal_profile/{
 # replace "{signal_id}" with signal ID
 
 
-# Path (from database directory) to directory containing vehicle and pedestrian traffic features.
-production_feature_dirpath: "atspm/{district}/feature_extraction/feature/{resolution_level}/{event_type}/{feature_type}/{signal_id}"
+# Path (from database directory) to directory containing vehicle and pedestrian-related signal and traffic features.
+production_feature_dirpath: "atspm/{district}/feature_extraction/feature/{resolution_level}/{event_type}/{feature_name}/{signal_id}"
 # replace "{district}" with "fdot_d5", or "fdot_d7"
 # replace "{resolution_level}" with "phase", or "cycle"
 # replace "{event_type}" with "vehicle_signal", "pedestrian_signal", "vehicle_traffic", or "pedestrian_traffic"
-# replace "{feature_type}" with feature name
+# replace "{feature_name}" with feature name
 # replace "{signal_id}" with signal ID
 
 

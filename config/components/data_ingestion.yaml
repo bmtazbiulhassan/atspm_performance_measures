@@ -12,7 +12,7 @@ data_scraping: # Settings for scraping data from NOEMI reports and ATSPM event d
   # Currently configured to use Chrome only.
   browser_types:
     - "chrome"
-  
+
 
   # Configuration settings for scraping reports from the NOEMI.
   noemi: 
@@ -41,12 +41,10 @@ data_scraping: # Settings for scraping data from NOEMI reports and ATSPM event d
     date_column_name: "Date"
 
     # Column name in the Sunstore portal table containing the download link.
-    link_column_name: "Download
-
+    link_column_name: "Download"
 
 
 # data_sorting: # Settings for sorting and organizing raw ATSPM event data from Sunstore.
-s
 
 
 data_preprocessing: # Settings for pre-processing raw NOEMI reports.
@@ -55,8 +53,8 @@ data_preprocessing: # Settings for pre-processing raw NOEMI reports.
   noemi:
 
     # Name of the directory containing the "intersection" and "lane" tables
-    intersection_dir: "intersection"
-    lane_dir: "lanes"
+    intersection_dirname: "intersection"
+    lane_dirname: "lanes"
 
     # Mapping for renaming column names in the "lane" table (by manual review)
     rename_map:

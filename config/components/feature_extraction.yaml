@@ -24,7 +24,6 @@ data_quality_check: # Settings for validating the quality of ATSPM event data
         - 81
 
 
-
 feature_extraction: # Configurations for extracting features from ATSPM event data
 
   # Settings for extracting features from ATSPM event data.
@@ -50,6 +49,11 @@ feature_extraction: # Configurations for extracting features from ATSPM event da
       vehicle_traffic:
         - 82
         - 81
+
+    # Signal map (mapping event codes representing signal types (i.e., green, yellow, etc.) in terms of 1, 8, 10, and 11)
+    signal_map:
+      7: 8
+      9: 10      
         
 
   # Settings for mapping signal phase numbers to barrier numbers based on signal configuration data to facilitate feature extraction.
