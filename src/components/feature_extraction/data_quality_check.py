@@ -199,7 +199,8 @@ class DataQualityCheck:
                 df_event_param = df_event[df_event[event_param_column_name] == param].reset_index(drop=True)
 
                 # Add sequence ID to identify unique event sequences
-                df_event_param = core_event_utils.add_event_sequence_id(df_event=df_event_param, valid_event_sequence=valid_event_sequence)
+                df_event_param["sequenceID"] = core_event_utils.add_event_sequence_id(df_event=df_event_param, 
+                                                                                      valid_event_sequence=valid_event_sequence)
                 
                 # Check sequence validity and count errors and correct sequences
                 errors, corrects = self._check_event_sequence(
