@@ -913,7 +913,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             raise CustomException(custom_message=f"Error loading data for signal ID: {signal_id}", 
                                   sys_module=sys)
     
-    def filter_config_by_detector(self, df_config: pd.DataFrame, detector_type: str):
+    def _filter_config_by_detector(self, df_config: pd.DataFrame, detector_type: str):
         """
         Filters the configuration DataFrame based on the detector type (back, front, or count).
 
@@ -974,7 +974,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             raise CustomException(custom_message=f"Error filtering configuration data by {detector_type} detector", 
                                 sys_module=sys)
 
-    def calculate_stats(self, df: pd.DataFrame, column_names: list, include_sum_list: bool = False):
+    def _calculate_stats(self, df: pd.DataFrame, column_names: list, include_sum_list: bool = False):
         """
         Processes specified columns in the DataFrame containing nested lists and generates
         derived statistics columns:
@@ -1117,7 +1117,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Apply configuration filter based on the detector type
             # Filter configuration for back detector
-            df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="back")
+            df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="back")
 
             # Join configuration data with event data on the channel number
             df_event_id = pd.merge(df_event_id, df_config_id,
@@ -1262,7 +1262,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             df_config_id = float_to_int(df_config_id)
 
             # Filter configuration data for the stop bar (front detector)
-            df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="front")
+            df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="front")
 
             # Step 4: Join event data with configuration data on channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
@@ -1389,7 +1389,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Step 9: Calculate statistics for occupancy data
             columns = [col for col in df_occupancy_id.columns if "Occupancy" in col]
-            df_occupancy_id = self.calculate_stats(df=df_occupancy_id, column_names=columns, include_sum_list=True)
+            df_occupancy_id = self._calculate_stats(df=df_occupancy_id, column_names=columns, include_sum_list=True)
 
             # Step 10: Save the extracted occupancy data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
@@ -1487,7 +1487,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 raise ValueError("Mismatched number of SPaT and occupancy columns.")
 
             columns = sorted(columns, key=lambda x: x[-1])
-            
+
             for spat_column, occupancy_column in zip(columns[::2], columns[1::2]):
                 # Ensure phase numbers match between SPaT and occupancy columns
                 if spat_column[-1] != occupancy_column[-1]:
@@ -1564,7 +1564,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             df_config_id = float_to_int(df_config_id)
 
             # Filter configuration data for the back detector
-            df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="back")
+            df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="back")
 
             # Step 4: Join configuration data with event data on channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
@@ -1673,7 +1673,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Step 9: Calculate statistics for headway data
             columns = [col for col in df_headway_id.columns if "Headway" in col]
-            df_headway_id = self.calculate_stats(df=df_headway_id, column_names=columns)
+            df_headway_id = self._calculate_stats(df=df_headway_id, column_names=columns)
 
             # Step 10: Save the extracted headway data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
@@ -1730,9 +1730,9 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Apply the appropriate configuration filter based on the with_countbar flag
             if with_countbar:
-                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="count")
+                df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="count")
             else:
-                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="front")
+                df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="front")
 
             # Step 4: Join configuration data with event data on channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
@@ -1884,9 +1884,9 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Apply the appropriate configuration filter based on the `with_countbar` flag
             if with_countbar:
-                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="count")
+                df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="count")
             else:
-                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="front")
+                df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="front")
 
             # Step 4: Merge configuration data with event data based on the channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
