@@ -346,8 +346,11 @@ class TrafficSignalProfile(CoreEventUtils):
             # Initialize an empty list to store phase profiles
             phase_profile_id = []
             for phase_no in sorted(df_event_id[dict_column_names["param"]].unique()):
-                # Filter data for each phase number and assign sequence IDs
+                # Filter data for each phase number
                 df_event_phase = df_event_id[df_event_id[dict_column_names["param"]] == phase_no]
+
+                # Assign sequence IDs
+                df_event_phase = df_event_phase.copy()
                 df_event_phase["sequenceID"] = self.add_event_sequence_id(df_event_phase, 
                                                                           valid_event_sequence=valid_event_sequence)
 
@@ -712,128 +715,133 @@ class SignalFeatureExtract(CoreEventUtils):
         """
         self.day = day; self.month = month; self.year = year
 
-    def extract_spat(self, signal_id: str): # Signal Phasing and Timing (SPAT)
-        # Path (from database directory) to directory where cycle-level vehicle signal profile is stored
-        _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_signal",
-            signal_id=signal_id
-        )
-        
-        # Load vehicle cycle profile data 
-        df_vehicle_cycle_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
-                                                sub_dirpath=production_signal_dirpath, 
-                                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                                                file_type="pkl")
+    def extract_spat(self, signal_id: str):
+        """
+        Extracts Signal Phasing and Timing (SPaT) data for a given signal ID at the cycle level.
 
-        # List of signals
-        signal_types = ["green", "yellow", "redClearance", "red"]
-        
-        # Initialize dataframe to store phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
-        df_spat_id = pd.DataFrame() # stratio: signal (i.e., "green", "yellow", "redClearance", and "red") ratio
-        
-        for i in range(len(df_vehicle_cycle_profile_id)):
-            # Extract signal info: cycle
-            signal_id = df_vehicle_cycle_profile_id.signalID[i]
-            
-            cycle_no = df_vehicle_cycle_profile_id.cycleNo[i]
-            cycle_begin = df_vehicle_cycle_profile_id.cycleBegin[i]; cycle_end = df_vehicle_cycle_profile_id.cycleEnd[i]
-            cycle_length = df_vehicle_cycle_profile_id.cycleLength[i]
-        
-            # Initialize a dictionary with signal info to also store phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
-            dict_spat_id = {
-                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
-                } 
-        
-            # Get list of unique phase nos from columns
-            phase_nos = [int(column[-1]) for column in df_vehicle_cycle_profile_id.columns if "Phase" in column]
-        
-            # Update dictionary to hold phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
-            for phase_no in phase_nos:
-                dict_spat_id.update(
-                    {f"greenRatioPhase{phase_no}": 0, 
-                     f"yellowRatioPhase{phase_no}": 0, 
-                     f"redClearanceRatioPhase{phase_no}": 0, f"redRatioPhase{phase_no}": 0}
-                )
-        
-            # Add signal info to the dictonary
-            dict_spat_id["signalID"] = signal_id; 
-            
-            dict_spat_id["cycleNo"] = cycle_no
-            dict_spat_id["cycleBegin"] = cycle_begin; dict_spat_id["cycleEnd"] = cycle_end
-            dict_spat_id["cycleLength"] = cycle_length
-        
-            # Intialize dictionary to temporarily add signal times of every phase
-            dict_signal_types = {"green": [], "yellow": [], "redClearance": [], "red": []}
-            
-            # Loop through phase nos 
-            for phase_no in phase_nos:
-                # Get red times
-                dict_signal_types["red"] = df_vehicle_cycle_profile_id.loc[i, f"redPhase{phase_no}"]
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
 
-                # Check if the instance is not list (if not, convert to list)
-                if not isinstance(dict_signal_types["red"], list):
-                    dict_signal_types["red"] = [dict_signal_types["red"]]
-        
-                # If there's no red time for the given phase, then there's also no green time for the given phase
-                # If (dict_signal_types["red"] == [pd.NaT]) or (dict_signal_types["red"] == [np.nan]):
-                if any(pd.isna(time) for time in dict_signal_types["red"]):
-                    for signal_type in signal_types:
-                        # Add 1 when signal is red, else 0
-                        if signal_type == "red":
-                            dict_spat_id[f"{signal_type}RatioPhase{phase_no}"] = 1  
-                        else:
-                            dict_spat_id[f"{signal_type}RatioPhase{phase_no}"] = 0
-        
-                    # After adding continue (to proceed to next phase in the loop)
-                    continue
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing phase-specific green, yellow, red clearance, and red ratios for each cycle.
+        """
+        try:
+            # Step 1: Define the path to the directory where vehicle cycle profile data is stored
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_signal",
+                signal_id=signal_id
+            )
 
-                # Get green, yellow, and red clearance times
-                dict_signal_types["green"] = df_vehicle_cycle_profile_id.loc[i, f"greenPhase{phase_no}"]
-                dict_signal_types["yellow"] = df_vehicle_cycle_profile_id.loc[i, f"yellowPhase{phase_no}"]
-                dict_signal_types["redClearance"] = df_vehicle_cycle_profile_id.loc[i, f"redClearancePhase{phase_no}"]
-        
-                # Get and add phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle
-                for signal_type in signal_types:
-                    # Check if the instance is not list (if not, convert to list)
-                    if not isinstance(dict_signal_types[f"{signal_type}"], list):
-                        dict_signal_types[f"{signal_type}"] = [dict_signal_types[f"{signal_type}"]]
-                        
-                    # Intialize variable to store time difference 
-                    time_diff = 0
+            # Step 2: Load vehicle cycle profile data
+            df_vehicle_cycle_profile_id = load_data(
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_signal_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
 
-                    # Loop through signal times (format: [(start, end), (start, end), ..., (start, end)]
-                    for start_time, end_time in dict_signal_types[f"{signal_type}"]:
-                        # Calculate and store time difference in seconds
-                        time_diff += (end_time - start_time).total_seconds()
-        
-                    # Calcuate and store signal ratio
-                    dict_spat_id[f"{signal_type}RatioPhase{phase_no}"] = round(time_diff / cycle_length, 4)
-    
-            
-            # Concatenate phase-specific green ratio, yellow ratio, red clearance ratio, and red ratio per cycle 
-            df_spat_id = pd.concat([df_spat_id, pd.DataFrame([dict_spat_id])], axis=0, ignore_index=True)  
+            # Step 3: Initialize variables
+            df_spat_id = pd.DataFrame()  # DataFrame to store SPaT data
 
-        # Add date information to the DataFrame
-        df_spat_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+            # Step 4: Iterate over each cycle in the vehicle cycle profile
+            for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+                # Extract cycle-specific information
+                signal_id = df_vehicle_cycle_profile_id.signalID[i]
+                cycle_no = df_vehicle_cycle_profile_id.cycleNo[i]
+                cycle_begin = df_vehicle_cycle_profile_id.cycleBegin[i]
+                cycle_end = df_vehicle_cycle_profile_id.cycleEnd[i]
+                cycle_length = df_vehicle_cycle_profile_id.cycleLength[i]
 
-        # Path (from database directory) to directory where cycle-level vehicle signal feature (spat) will be stored
-        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_signal",
-            feature_name="spat",
-            signal_id=signal_id
-        )
+                # Initialize a dictionary to store SPaT data for the current cycle
+                dict_spat_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end,
+                    "cycleLength": cycle_length
+                }
 
-        # Save the phase profile data as a pkl file in the export directory
-        export_data(df=df_spat_id, 
-                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
-                    sub_dirpath=production_feature_dirpath,
-                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                    file_type="pkl")
+                # Extract unique phase numbers from the DataFrame columns
+                phase_nos = [int(column[-1]) for column in df_vehicle_cycle_profile_id.columns if "Phase" in column]
 
-        return df_spat_id  
+                # Add placeholders for each signal type ratio for each phase
+                for phase_no in phase_nos:
+                    dict_spat_id.update({
+                        f"greenRatioPhase{phase_no}": 0,
+                        f"yellowRatioPhase{phase_no}": 0,
+                        f"redClearanceRatioPhase{phase_no}": 0,
+                        f"redRatioPhase{phase_no}": 0
+                    })
 
+                # Step 5: Calculate signal ratios for each phase
+                dict_signal_types = {
+                    signal_type: [] for signal_type in ["green", "yellow", "redClearance", "red"]
+                }  # Temporary storage for signal times
+
+                for phase_no in phase_nos:
+                    # Extract red phase times
+                    dict_signal_types["red"] = df_vehicle_cycle_profile_id.loc[i, f"redPhase{phase_no}"]
+                    if not isinstance(dict_signal_types["red"], list):  # Ensure red times are in list format
+                        dict_signal_types["red"] = [dict_signal_types["red"]]
+
+                    # If red times are missing, set default ratios
+                    if any(pd.isna(time) for time in dict_signal_types["red"]):
+                        for signal_type in ["green", "yellow", "redClearance", "red"]:
+                            dict_spat_id[f"{signal_type}RatioPhase{phase_no}"] = 1 if signal_type == "red" else 0
+                        continue
+
+                    # Extract green, yellow, and red clearance times
+                    for signal_type in ["green", "yellow", "redClearance"]:
+                        dict_signal_types[signal_type] = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
+                        if not isinstance(dict_signal_types[signal_type], list):  # Ensure times are in list format
+                            dict_signal_types[signal_type] = [dict_signal_types[signal_type]]
+
+                    # Calculate and store signal ratios
+                    for signal_type in ["green", "yellow", "redClearance", "red"]:
+                        time_diff = 0  # Initialize variable to sum time differences
+                        for start_time, end_time in dict_signal_types[signal_type]:
+                            time_diff += (end_time - start_time).total_seconds()  # Calculate duration in seconds
+                        # Calculate and store the ratio
+                        dict_spat_id[f"{signal_type}RatioPhase{phase_no}"] = round(time_diff / cycle_length, 4)
+
+                # Step 6: Append the cycle's SPaT data to the DataFrame
+                df_spat_id = pd.concat([df_spat_id, pd.DataFrame([dict_spat_id])], axis=0, ignore_index=True)
+
+            # Step 7: Add date information to the DataFrame
+            df_spat_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+
+            # Step 8: Define the output directory for SPaT data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_signal",
+                feature_name="spat",
+                signal_id=signal_id
+            )
+
+            # Step 9: Save the SPaT data as a pickle file
+            export_data(
+                df=df_spat_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Log success and return the data
+            logging.info(f"SPaT data successfully extracted and saved for signal ID: {signal_id}")
+            return df_spat_id
+
+        except Exception as e:
+            # Handle and log any errors
+            logging.error(f"Error extracting SPaT data for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting SPaT data for signal ID: {signal_id}", 
+                                sys_module=sys)
+  
 
 class TrafficFeatureExtract(CoreEventUtils):
 
@@ -1077,7 +1085,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 sys_module=sys
             )
             
-    def extract_volume(self, signal_id: str, with_countbar: bool = False):
+    def extract_volume(self, signal_id: str):
         """
         Extracts cycle-level volume data for a given signal ID.
 
@@ -1085,9 +1093,6 @@ class TrafficFeatureExtract(CoreEventUtils):
         -----------
         signal_id : str
             Unique identifier for the traffic signal.
-        with_countbar : bool, optional
-            If True, filters configuration data for the count bar. Otherwise, filters for the back detector.
-            Default is False.
 
         Returns:
         --------
@@ -1111,12 +1116,8 @@ class TrafficFeatureExtract(CoreEventUtils):
             df_config_id = float_to_int(df_config_id)
 
             # Apply configuration filter based on the detector type
-            if with_countbar:
-                # Filter configuration for count bar (front detector)
-                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="count")
-            else:
-                # Filter configuration for back detector
-                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="back")
+            # Filter configuration for back detector
+            df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="back")
 
             # Join configuration data with event data on the channel number
             df_event_id = pd.merge(df_event_id, df_config_id,
@@ -1350,6 +1351,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                             df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
 
                             # Assign sequence IDs to on/off events
+                            df_event_channel = df_event_channel.copy()
                             df_event_channel["sequenceID"] = self.add_event_sequence_id(
                                 df_event_channel, valid_event_sequence=[82, 81]
                             )
@@ -1411,6 +1413,128 @@ class TrafficFeatureExtract(CoreEventUtils):
         except Exception as e:
             logging.error(f"Error extracting occupancy for signal ID: {signal_id}: {e}")
             raise CustomException(custom_message=f"Error extracting occupancy for signal ID: {signal_id}", 
+                                sys_module=sys)
+
+    def extract_split_failure(self, signal_id: str):
+        """
+        Extracts split failure information for a given signal ID by comparing SPaT and occupancy data.
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing split failure flags for each phase and cycle.
+        """
+        try:
+            # Step 1: Load SPaT data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_signal",
+                feature_name="spat",
+                signal_id=signal_id
+            )
+            df_spat_id = load_data(
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Step 2: Load occupancy data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="occupancy",
+                signal_id=signal_id
+            )
+            df_occupancy_id = load_data(
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Step 3: Extract green ratio columns from SPaT data
+            spat_columns = [col for col in df_spat_id.columns if "greenRatioPhase" in col]
+
+            # Keep only relevant columns in SPaT data
+            df_spat_id = df_spat_id[["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"] + spat_columns]
+
+            # Convert green ratio into green time by multiplying with cycle length
+            for column in spat_columns:
+                df_spat_id[column] = df_spat_id[column] * df_spat_id["cycleLength"]
+
+            # Step 4: Extract green occupancy columns from occupancy data
+            occupancy_columns = [col for col in df_occupancy_id.columns if "greenOccupancyPhase" in col]
+
+            # Keep only relevant columns in occupancy data
+            df_occupancy_id = df_occupancy_id[["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"] + occupancy_columns]
+
+            # Step 5: Merge SPaT and occupancy data on common keys
+            df_split_failure_id = pd.merge(
+                df_spat_id,
+                df_occupancy_id,
+                on=["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"]
+            )
+
+            # Step 6: Validate column pairs for phases
+            columns = spat_columns + occupancy_columns
+            if len(columns) % 2 != 0:
+                raise ValueError("Mismatched number of SPaT and occupancy columns.")
+
+            columns = sorted(columns, key=lambda x: x[-1])
+            
+            for spat_column, occupancy_column in zip(columns[::2], columns[1::2]):
+                # Ensure phase numbers match between SPaT and occupancy columns
+                if spat_column[-1] != occupancy_column[-1]:
+                    raise ValueError(f"Phase mismatch: {spat_column} and {occupancy_column}")
+                phase_no = spat_column[-1]
+
+                # Step 7: Calculate split failure for the green phase
+                # Compute split failure flags: occupancy values exceeding green time
+                df_split_failure_id[f"greenSplitFailurePhase{phase_no}"] = df_split_failure_id.apply(
+                    lambda row: [
+                        x / (row[spat_column] if row[spat_column] != 0 else 1) for x in row[occupancy_column]
+                    ],
+                    axis=1
+                )
+
+                # Convert to binary flags: 1 if any occupancy exceeds 99% of green time, else 0
+                df_split_failure_id[f"greenSplitFailurePhase{phase_no}"] = df_split_failure_id[
+                    f"greenSplitFailurePhase{phase_no}"
+                ].apply(lambda vals: 1 if any(val >= 0.99 for val in vals) else 0)
+
+                # Drop the intermediate columns for this phase
+                df_split_failure_id = df_split_failure_id.drop(columns=[spat_column, occupancy_column])
+
+            # Step 8: Define the path to save split failure data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="split_failure",
+                signal_id=signal_id
+            )
+
+            # Step 9: Save the split failure data as a pickle file
+            export_data(
+                df=df_split_failure_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Return the resulting DataFrame
+            return df_split_failure_id
+
+        except Exception as e:
+            # Log errors and raise a custom exception for debugging
+            logging.error(f"Error extracting split failure data for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting split failure data for signal ID: {signal_id}", 
                                 sys_module=sys)
 
     def extract_headway(self, signal_id: str):
@@ -1871,11 +1995,11 @@ class TrafficFeatureExtract(CoreEventUtils):
             )
 
             # Log success and return the data
-            Logger.info(f"Dilemma running data successfully extracted and saved for signal ID: {signal_id}")
+            logging.info(f"Dilemma running data successfully extracted and saved for signal ID: {signal_id}")
             return df_dilemma_running_id
 
         except Exception as e:
-            Logger.error(f"Error extracting dilemma running for signal ID: {signal_id}: {e}")
+            logging.error(f"Error extracting dilemma running for signal ID: {signal_id}: {e}")
             raise CustomException(custom_message=f"Error extracting dilemma running for signal ID: {signal_id}", 
                                 sys_module=sys)
 
