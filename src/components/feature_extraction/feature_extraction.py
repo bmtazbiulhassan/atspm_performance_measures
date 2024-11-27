@@ -850,185 +850,122 @@ class TrafficFeatureExtract(CoreEventUtils):
         year : int
             Year of the desired date (e.g., 2024).
         """
-        self.day = day; self.month = month; self.year = year 
+        self.day = day
+        self.month = month
+        self.year = year 
+        logging.info(f"Initialized TrafficFeatureExtract for {year}-{month:02d}-{day:02d}")
 
     def _load_data(self, signal_id: str):
-        # Path (from database directory) to directory where sorted event data is stored
-        interim_event_dirpath, _, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(signal_id=signal_id)
+        """
+        Load data from various sources required for feature extraction.
 
-        # Load event data
-        df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
-                                sub_dirpath=interim_event_dirpath, 
-                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                                file_type="pkl")
-        
-        # Path (from database directory) to directory where signal configuration data is stored
-        _, interim_config_dirpath, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath()
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the signal.
 
-        # Load configuration data for the specific signal
-        df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
-                                 sub_dirpath=interim_config_dirpath,
-                                 filename=f"{signal_id}",
-                                 file_type="csv")
-        
-        # Path (from database directory) to directory where cycle-level vehicle signal profile is stored
-        _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_signal",
-            signal_id=signal_id
-        )
-        
-        # Load vehicle cycle profile data 
-        df_vehicle_cycle_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
-                                                sub_dirpath=production_signal_dirpath, 
-                                                filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                                                file_type="pkl")
-        
-        return df_event_id, df_config_id, df_vehicle_cycle_profile_id
+        Returns:
+        --------
+        tuple
+            DataFrames for event data, configuration data, and vehicle cycle profile.
+        """
+        try:
+            logging.info(f"Loading data for signal ID: {signal_id}")
 
-    def extract_volume(self, signal_id: str):
-        # Load event, configuration, and vehicle cycle profile data
-        df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
-        
-        # Filter event data for the event code sequence: [81] (i.e., detector off)
-        df_event_id = self.filter_by_event_sequence(df_event=df_event_id, 
-                                                    event_sequence=[81])
+            # Load event data
+            interim_event_dirpath, _, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(signal_id=signal_id)
+            df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
+                                    sub_dirpath=interim_event_dirpath, 
+                                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                    file_type="pkl")
 
-        # Drop rows with missing phase no in configuration data
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
-        df_config_id = float_to_int(df_config_id) 
+            # Load configuration data
+            _, interim_config_dirpath, _, _ = feature_extraction_dirpath.get_feature_extraction_dirpath()
+            df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
+                                     sub_dirpath=interim_config_dirpath,
+                                     filename=f"{signal_id}",
+                                     file_type="csv")
 
-        # Filter configuration data for back detector
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])]
-        df_config_id = df_config_id[df_config_id["stopBarDistance"] != 0].reset_index(drop=True)
+            # Load vehicle cycle profile data
+            _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_signal",
+                signal_id=signal_id
+            )
+            df_vehicle_cycle_profile_id = load_data(base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                                                    sub_dirpath=production_signal_dirpath, 
+                                                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
+                                                    file_type="pkl")
 
-        # If multiple back detectors exist, consider farthest of the two detectors from stop bar 
-        for phase_no in df_config_id["phaseNo"].unique():
-            df_config_phase = df_config_id[df_config_id["phaseNo"] == phase_no]
+            logging.info(f"Successfully loaded data for signal ID: {signal_id}")
+            return df_event_id, df_config_id, df_vehicle_cycle_profile_id
 
-            back_detectors_at = df_config_phase["stopBarDistance"].unique().tolist()
-            if len(back_detectors_at) == 1:
-                continue
-            else:
-                indices = df_config_phase[df_config_phase["stopBarDistance"] == min(back_detectors_at)].index
-                indices = indices.tolist()
-
-                df_config_id = df_config_id.drop(index=indices)
-
-        df_config_id = df_config_id.reset_index(drop=True)
-        
-        # Join configuration data with event data 
-        df_event_id = pd.merge(df_event_id, df_config_id, 
-                               how="inner", 
-                               left_on=["eventParam"], right_on=["channelNo"])
-
-        # Change dtype
-        df_event_id = float_to_int(df_event_id)
-                
-        # Initialize df to store volume data
-        df_volume_id = pd.DataFrame()
-
-        for i in range(len(df_vehicle_cycle_profile_id)):
-            # Extrac signal info
-            signal_id = df_vehicle_cycle_profile_id["signalID"][i] 
-
-            cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
-            cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]; cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
-            cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
-        
-            # Initialize dictionary with signal info to also store phase-specific volume per cycle
-            dict_volume_id = {
-                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
-                }
-
-            # List all unique phase nos
-            phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
-
-            # Update dictionary to store phase-specific volume per cycle
-            for phase_no in phase_nos:
-                dict_volume_id.update(
-                    {f'volumePhase{phase_no}': 0}
-                )
-                dict_volume_id.update(
-                    {f'greenVolumePhase{phase_no}': 0, 
-                     f'yellowVolumePhase{phase_no}': 0, 
-                     f'redClearanceVolumePhase{phase_no}': 0, f'redVolumePhase{phase_no}': 0}
-                )
-
-            # Add signal info to the dictonary
-            dict_volume_id["signalID"] = signal_id; 
-            
-            dict_volume_id["cycleNo"] = cycle_no
-            dict_volume_id["cycleBegin"] = cycle_begin; dict_volume_id["cycleEnd"] = cycle_end
-            dict_volume_id["cycleLength"] = cycle_length
-
-            # Filter out all the detector off events within the current cycle, sort, and reset index
-            df_event_cycle = df_event_id[(
-                (df_event_id["timeStamp"] >= cycle_begin) & 
-                (df_event_id["timeStamp"] <= cycle_end)
-            )]
-
-            df_event_cycle = df_event_cycle.sort_values(by=["timeStamp", "phaseNo", "channelNo"])
-            df_event_cycle = df_event_cycle.reset_index(drop=True)
-
-            for phase_no in phase_nos:
-                # Filter event data based on phase no, and reset index
-                df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
-
-                # Determine phase volume
-                phase_volume = len(df_event_phase)
-
-                dict_volume_id[f"volumePhase{phase_no}"] = phase_volume
-
-                # Intialize list of signal types
-                signal_types = ["green", "yellow", "redClearance", "red"] 
-                
-                for signal_type in signal_types:
-                    # Get timestamps (format: [(start, end), (start, end), ..., (start, end)]) of the current signal in the current phase
-                    timestamps = df_vehicle_cycle_profile_id.loc[i, f'{signal_type}Phase{phase_no}']
-
-                    # Check if the instance is not list (if not, convert to list)
-                    if not isinstance(timestamps, list):
-                        timestamps = [timestamps]
-
-                    # If the current signal doesn't have any timeslot in the current signal type of the phase, store zero volume
-                    if (timestamps == [pd.NaT]) or (all(pd.isna(timestamp) for timestamp in timestamps)):
-                        signal_volume = 0
-                    else: 
-                        signal_volume = 0
-                        # Loop through signal times (format: [(start, end), (start, end), ..., (start, end)]
-                        for start_time, end_time in timestamps:
-                            # calculate and store volume for the signal
-                            signal_volume += len(
-                                df_event_phase[((df_event_phase["timeStamp"] >= start_time) & (df_event_phase["timeStamp"] <= end_time))]
-                                )
-                            
-                    # Add phase-specific volume for the current signal
-                    dict_volume_id[f'{signal_type}VolumePhase{phase_no}'] = signal_volume
-
-            df_volume_id = pd.concat([df_volume_id, pd.DataFrame([dict_volume_id])], 
-                                     axis=0, ignore_index=True)
-        
-        # Add date information to the DataFrame
-        df_volume_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
-
-        # Path (from database directory) to directory where cycle-level vehicle traffic feature (volume) will be stored
-        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_traffic",
-            feature_name="volume",
-            signal_id=signal_id
-        )
-
-        # Save the phase profile data as a pkl file in the export directory
-        export_data(df=df_volume_id, 
-                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
-                    sub_dirpath=production_feature_dirpath,
-                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                    file_type="pkl")
-
-        return df_volume_id
+        except Exception as e:
+            logging.error(f"Error loading data for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error loading data for signal ID: {signal_id}", 
+                                  sys_module=sys)
     
+    def filter_config_by_detector(self, df_config: pd.DataFrame, detector_type: str):
+        """
+        Filters the configuration DataFrame based on the detector type (back, front, or count).
+
+        Parameters:
+        -----------
+        df_config : pd.DataFrame
+            The configuration DataFrame containing signal configuration data.
+        detector_type : str
+            The type of detector to filter ("back", "front", or "count").
+
+        Returns:
+        --------
+        pd.DataFrame
+            The filtered configuration DataFrame.
+
+        Raises:
+        -------
+        ValueError
+            If the detector type is not valid.
+        """
+        try:
+            # Ensure detector type is valid
+            if detector_type not in ["back", "front", "count"]:
+                raise ValueError(f"Invalid detector type: {detector_type}. Choose 'back', 'front', or 'count'.")
+
+            # Drop rows with missing phase numbers
+            df_config = df_config[pd.notna(df_config["phaseNo"])]
+
+            if detector_type == "back":
+                # Filter for back detector (stopBarDistance != 0)
+                df_config = df_config[df_config["stopBarDistance"] != 0].reset_index(drop=True)
+
+                # If multiple back detectors exist, keep the farthest from the stop bar
+                for phase_no in df_config["phaseNo"].unique():
+                    df_config_phase = df_config[df_config["phaseNo"] == phase_no]
+                    back_detectors_at = df_config_phase["stopBarDistance"].unique().tolist()
+
+                    if len(back_detectors_at) > 1:
+                        indices = df_config_phase[df_config_phase["stopBarDistance"] == min(back_detectors_at)].index
+                        df_config = df_config.drop(index=indices)
+
+            if detector_type == "front":
+                # Filter for front detector (stopBarDistance == 0)
+                df_config = df_config[df_config["stopBarDistance"] == 0].reset_index(drop=True)
+
+            if detector_type == "count":
+                # Filter for count bar detectors
+                df_config = df_config[df_config["countBar"] == 1]
+                df_config = df_config[df_config["movement"].isin(["L", "T"])].reset_index(drop=True)
+
+            # Reset index after filtering
+            df_config = df_config.reset_index(drop=True)
+
+            return df_config
+
+        except Exception as e:
+            logging.error(f"Error filtering configuration data by {detector_type} detector: {e}")
+            raise CustomException(custom_message=f"Error filtering configuration data by {detector_type} detector", 
+                                sys_module=sys)
+
     def calculate_stats(self, df: pd.DataFrame, column_names: list, include_sum_list: bool = False):
         """
         Processes specified columns in the DataFrame containing nested lists and generates
@@ -1139,604 +1076,809 @@ class TrafficFeatureExtract(CoreEventUtils):
                 custom_message=f"Error processing statistics for columns {column_names}: {str(e)}",
                 sys_module=sys
             )
+            
+    def extract_volume(self, signal_id: str, with_countbar: bool = False):
+        """
+        Extracts cycle-level volume data for a given signal ID.
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
+        with_countbar : bool, optional
+            If True, filters configuration data for the count bar. Otherwise, filters for the back detector.
+            Default is False.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing cycle-level volume data for the specified signal ID.
+
+        Raises:
+        -------
+        CustomException
+            If an error occurs during volume extraction.
+        """
+        try:
+            # Load event, configuration, and vehicle cycle profile data
+            df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
+
+            # Filter event data for event sequence [81] (i.e., detector off events)
+            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81])
+
+            # Drop rows with missing phase numbers in the configuration data and reset the index
+            df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
+            df_config_id = float_to_int(df_config_id)
+
+            # Apply configuration filter based on the detector type
+            if with_countbar:
+                # Filter configuration for count bar (front detector)
+                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="count")
+            else:
+                # Filter configuration for back detector
+                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="back")
+
+            # Join configuration data with event data on the channel number
+            df_event_id = pd.merge(df_event_id, df_config_id,
+                                   how="inner",
+                                   left_on=["eventParam"], right_on=["channelNo"])
+
+            # Ensure consistent data types for merged data
+            df_event_id = float_to_int(df_event_id)
+
+            # Initialize an empty DataFrame to store the final volume data
+            df_volume_id = pd.DataFrame()
+
+            # Iterate through each cycle in the vehicle cycle profile data
+            for i in range(len(df_vehicle_cycle_profile_id)):
+                # Extract signal and cycle details
+                signal_id = df_vehicle_cycle_profile_id["signalID"][i]
+                cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+                cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+                cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+                cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+
+                # Initialize a dictionary to store volume data for the current cycle
+                dict_volume_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end,
+                    "cycleLength": cycle_length
+                }
+
+                # List all unique phase numbers
+                phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
+
+                # Initialize phase-specific volume keys in the dictionary
+                for phase_no in phase_nos:
+                    dict_volume_id.update({
+                        f"volumePhase{phase_no}": 0,
+                        f"greenVolumePhase{phase_no}": 0,
+                        f"yellowVolumePhase{phase_no}": 0,
+                        f"redClearanceVolumePhase{phase_no}": 0,
+                        f"redVolumePhase{phase_no}": 0
+                    })
+
+                # Filter events within the current cycle's time range
+                df_event_cycle = df_event_id[
+                    (df_event_id["timeStamp"] >= cycle_begin) &
+                    (df_event_id["timeStamp"] <= cycle_end)
+                ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
+
+                # Process each phase
+                for phase_no in phase_nos:
+                    # Filter events for the current phase
+                    df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
+
+                    # Calculate the total number of events for the phase
+                    phase_volume = len(df_event_phase)
+                    dict_volume_id[f"volumePhase{phase_no}"] = phase_volume
+
+                    # Define signal types
+                    signal_types = ["green", "yellow", "redClearance", "red"]
+
+                    # Process each signal type
+                    for signal_type in signal_types:
+                        # Get timestamps for the current signal type and phase
+                        timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
+
+                        # Ensure timestamps are in list format
+                        if not isinstance(timestamps, list):
+                            timestamps = [timestamps]
+
+                        # Skip processing if no valid timestamps exist
+                        if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
+                            continue
+
+                        # Calculate the signal-specific volume
+                        signal_volume = 0
+                        for start_time, end_time in timestamps:
+                            signal_volume += len(
+                                df_event_phase[
+                                    (df_event_phase["timeStamp"] >= start_time) &
+                                    (df_event_phase["timeStamp"] <= end_time)
+                                ]
+                            )
+
+                        # Store the signal-specific volume in the dictionary
+                        dict_volume_id[f"{signal_type}VolumePhase{phase_no}"] = signal_volume
+
+                # Append the cycle-specific volume data to the DataFrame
+                df_volume_id = pd.concat([df_volume_id, pd.DataFrame([dict_volume_id])], axis=0, ignore_index=True)
+
+            # Add date information to the DataFrame
+            df_volume_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
+
+            # Define the directory path to save the volume data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="volume",
+                signal_id=signal_id
+            )
+
+            # Save the volume data as a .pkl file
+            export_data(df=df_volume_id,
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                        sub_dirpath=production_feature_dirpath,
+                        filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                        file_type="pkl")
+
+            # Log successful extraction
+            logging.info(f"Volume data successfully extracted and saved for signal ID: {signal_id}")
+            return df_volume_id
+
+        except Exception as e:
+            logging.error(f"Error extracting volume for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting volume for signal ID: {signal_id}", 
+                                sys_module=sys)
 
     def extract_occupancy(self, signal_id: str):
-        # Load event, configuration, and vehicle cycle profile data
-        df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
-        
-        # Filter event data for the event code sequence: [82, 81]
-        df_event_id = self.filter_by_event_sequence(df_event=df_event_id, 
-                                                    event_sequence=[82, 81])
+        """
+        Extracts occupancy data for a given signal ID at a cycle level.
 
-        # Drop rows with missing phase no in configuration data
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
-        df_config_id = float_to_int(df_config_id) 
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
 
-        # Filter configuration data for stop bar (front detector)
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])]
-        df_config_id = df_config_id[df_config_id["stopBarDistance"] == 0].reset_index(drop=True)
-        
-        # Join configuration data with event data 
-        df_event_id = pd.merge(df_event_id, df_config_id, 
-                               how="inner", 
-                               left_on=["eventParam"], right_on=["channelNo"])
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing occupancy data for each cycle and phase.
+        """
+        try:
+            # Step 1: Load required data
+            df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
 
-        # Change dtype
-        df_event_id = float_to_int(df_event_id)
-                
-        # Initialize df to store occupancy data
-        df_occupancy_id = pd.DataFrame()
+            # Step 2: Filter event data for the event sequence [82, 81] (detector on/off events)
+            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[82, 81])
 
-        for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
-            # Extrac signal info
-            signal_id = df_vehicle_cycle_profile_id["signalID"][i] 
+            # Step 3: Clean and filter configuration data
+            # Remove rows with missing phase numbers
+            df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
+            df_config_id = float_to_int(df_config_id)
 
-            cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
-            cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]; cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
-            cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
-        
-            # Initialize dictionary with signal info to also store phase-specific occupancy per cycle
-            dict_occupancy_id = {
-                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
+            # Filter configuration data for the stop bar (front detector)
+            df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="front")
+
+            # Step 4: Join event data with configuration data on channel number
+            df_event_id = pd.merge(df_event_id, df_config_id, 
+                                   how="inner", 
+                                   left_on=["eventParam"], right_on=["channelNo"])
+
+            # Ensure consistent data types
+            df_event_id = float_to_int(df_event_id)
+
+            # Step 5: Initialize an empty DataFrame to store occupancy data
+            df_occupancy_id = pd.DataFrame()
+
+            # Step 6: Process each cycle in the vehicle cycle profile
+            for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+                # Extract signal and cycle information
+                signal_id = df_vehicle_cycle_profile_id["signalID"][i]
+                cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+                cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+                cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+                cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+
+                # Initialize a dictionary to store occupancy data for the current cycle
+                dict_occupancy_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end,
+                    "cycleLength": cycle_length
                 }
 
-            # List all unique phase nos
-            phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
+                # List all unique phase numbers
+                phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
 
-            # Update dictionary to store phase-specific occupancy per cycle
-            for phase_no in phase_nos:
-                dict_occupancy_id.update(
-                    {f"greenOccupancyPhase{phase_no}": [[np.nan]], 
-                     f"yellowOccupancyPhase{phase_no}": [[np.nan]], 
-                     f"redClearanceOccupancyPhase{phase_no}": [[np.nan]], f"redOccupancyPhase{phase_no}": [[np.nan]]}
-                )
+                # Add placeholders for phase-specific occupancy data
+                for phase_no in phase_nos:
+                    dict_occupancy_id.update({
+                        f"greenOccupancyPhase{phase_no}": [[np.nan]],
+                        f"yellowOccupancyPhase{phase_no}": [[np.nan]],
+                        f"redClearanceOccupancyPhase{phase_no}": [[np.nan]],
+                        f"redOccupancyPhase{phase_no}": [[np.nan]]
+                    })
 
-            # Add signal info to the dictonary
-            dict_occupancy_id["signalID"] = signal_id; 
-            
-            dict_occupancy_id["cycleNo"] = cycle_no
-            dict_occupancy_id["cycleBegin"] = cycle_begin; dict_occupancy_id["cycleEnd"] = cycle_end
-            dict_occupancy_id["cycleLength"] = cycle_length
+                # Set a time tolerance window for capturing overlapping events at cycle boundaries
+                if i == 0:  # First cycle
+                    st = cycle_begin
+                    et = df_vehicle_cycle_profile_id.loc[i+1, "cycleEnd"]
+                elif i == len(df_vehicle_cycle_profile_id) - 1:  # Last cycle
+                    st = df_vehicle_cycle_profile_id.loc[i-1, "cycleBegin"]
+                    et = cycle_end
+                else:  # Intermediate cycles
+                    st = df_vehicle_cycle_profile_id.loc[i-1, "cycleBegin"]
+                    et = df_vehicle_cycle_profile_id.loc[i+1, "cycleEnd"]
 
-            # Set tolerance of on cycle begin and cycle end to filter, and reset event data: so that every 'on' and 'off' sequence with the current cycle is captured
-            if i == 0:  # Check if it is the first index
-                st = cycle_begin
-                et = df_vehicle_cycle_profile_id.loc[i+1, "cycleEnd"]
-            elif i == len(df_vehicle_cycle_profile_id) - 1:  # Check if it is the last index
-                st = df_vehicle_cycle_profile_id.loc[i-1, "cycleBegin"]
-                et = cycle_end
-            else:
-                st = df_vehicle_cycle_profile_id.loc[i-1, "cycleBegin"]
-                et= df_vehicle_cycle_profile_id.loc[i+1, "cycleEnd"]
+                # Filter event data within the tolerance window
+                df_event_tolerance = df_event_id[
+                    (df_event_id["timeStamp"] >= st) & 
+                    (df_event_id["timeStamp"] <= et)
+                ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
 
-            # Filter out all the detector off events within the tolerance, sort, and reset index
-            df_event_tolerance = df_event_id[(
-                (df_event_id["timeStamp"] >= st) & # st: start time
-                (df_event_id["timeStamp"] <= et)   # et: end time
-            )]
+                # Step 7: Process each phase and signal type
+                for phase_no in phase_nos:
+                    # Filter event data for the current phase
+                    df_event_phase = df_event_tolerance[df_event_tolerance["phaseNo"] == phase_no].reset_index(drop=True)
 
-            df_event_tolerance = df_event_tolerance.sort_values(by=["timeStamp", "phaseNo", "channelNo"])
-            df_event_tolerance = df_event_tolerance.reset_index(drop=True)
+                    # Define signal types to process
+                    signal_types = ["green", "yellow", "redClearance", "red"]
 
-            for phase_no in phase_nos:
-                # Filter event data based on phase no, and reset index
-                df_event_phase = df_event_tolerance[df_event_tolerance["phaseNo"] == phase_no].reset_index(drop=True)
+                    for signal_type in signal_types:
+                        # Get timestamps for the current signal type and phase
+                        timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
 
-                # Intialize list of signal types
-                signal_types = ["green", "yellow", "redClearance", "red"] 
-                
-                for signal_type in signal_types:
-                    # Get timestamps (format: [(start, end), (start, end), ..., (start, end)]) of the current signal in the current phase
-                    timestamps = df_vehicle_cycle_profile_id.loc[i, f'{signal_type}Phase{phase_no}']
+                        # Ensure timestamps are in list format
+                        if not isinstance(timestamps, list):
+                            timestamps = [timestamps]
 
-                    # Check if the instance is not list (if not, convert to list)
-                    if not isinstance(timestamps, list):
-                        timestamps = [timestamps]
+                        # Skip if no valid timestamps exist
+                        if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
+                            continue
 
-                    # If the current signal doesn't have any timeslot in the current signal type of the phase, continue
-                    if (timestamps == [pd.NaT]) or (all(pd.isna(timestamp) for timestamp in timestamps)):
-                        continue
-
-                    for channel_no in df_event_phase["channelNo"].unique():
-                        # Filter events on channel no, sort, and reset index
-                        df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
-                        df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
-
-                        # Assign sequence ids
-                        df_event_channel["sequenceID"] = self.add_event_sequence_id(df_event_channel, 
-                                                                                    valid_event_sequence=[82, 81])
-
-                        # Intialize list to append occupancy per cycle of the current signal for the current channel
+                        # Initialize a list to store occupancy data for the current signal type
                         occupancies = [np.nan]
-                        
-                        # Loop through signal times (format: [(start, end), (start, end), ..., (start, end)]
-                        for start_time, end_time in timestamps:
-                            for sequence_id in df_event_channel["sequenceID"].unique():
-                                # Filter events specific to the current sequence in the given channel, and reset index
-                                df_event_sequence = df_event_channel[df_event_channel["sequenceID"] == sequence_id]
-                                df_event_sequence = df_event_sequence.reset_index(drop=True)
 
-                                # Continue if the sequence is not complete (either detector on or off is missing)
-                                if len(df_event_sequence) != 2:
-                                    continue
+                        for channel_no in df_event_phase["channelNo"].unique():
+                            # Filter event data for the current channel
+                            df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
+                            df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
 
-                                # Extract detector on and off time
-                                detector_ont = df_event_sequence["timeStamp"][0] # ont: on time
-                                detector_oft = df_event_sequence["timeStamp"][1] # oft: off time
-                                    
-                                # If detector on and off and start time and end time don't have any common time, continue
-                                if ((detector_ont <= start_time) and (detector_oft <= start_time)) or ((detector_ont >= end_time) and (detector_oft >= end_time)):
-                                    continue
-                                    
-                                # Get the intersecting time interval (max, min) of (detector on, detector off) and (signal start time, signal end time)
-                                max_st = max(detector_ont, start_time); min_et = min(detector_oft, end_time)
+                            # Assign sequence IDs to on/off events
+                            df_event_channel["sequenceID"] = self.add_event_sequence_id(
+                                df_event_channel, valid_event_sequence=[82, 81]
+                            )
 
-                                # If maximum start time is less than minimum end time, calculate the occupancy for current signal of the current channel (in sec)
-                                if max_st < min_et:
-                                    # Calculate occupancy for the current signal of the current channel
-                                    time_diff = round((min_et - max_st).total_seconds(), 4)
+                            for start_time, end_time in timestamps:
+                                for sequence_id in df_event_channel["sequenceID"].unique():
+                                    # Filter events for the current sequence
+                                    df_event_sequence = df_event_channel[df_event_channel["sequenceID"] == sequence_id].reset_index(drop=True)
 
-                                    # Append occupancy of the current signal of the current channel
-                                    occupancies.append(time_diff)
+                                    # Skip incomplete sequences (missing on/off events)
+                                    if len(df_event_sequence) != 2:
+                                        continue
 
-                        # Append phase-specific occupancy per cycle for the current phase
-                        dict_occupancy_id[f'{signal_type}OccupancyPhase{phase_no}'].append(occupancies)
-                        
-            df_occupancy_id = pd.concat([df_occupancy_id, pd.DataFrame([dict_occupancy_id])],
-                                        axis=0, ignore_index=True)
-        
-        # Add date information to the DataFrame
-        df_occupancy_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+                                    # Extract detector on/off times
+                                    detector_ont = df_event_sequence["timeStamp"][0]
+                                    detector_oft = df_event_sequence["timeStamp"][1]
 
-        columns = []
-        for column in df_occupancy_id.columns:
-            if "Occupancy" in column:
-                columns.append(column)
+                                    # Calculate overlapping time interval with signal times
+                                    max_st = max(detector_ont, start_time)
+                                    min_et = min(detector_oft, end_time)
 
-        # Calculate stats
-        df_occupancy_id = self.calculate_stats(df=df_occupancy_id, column_names=columns,  
-                                               include_sum_list=True)
+                                    # Calculate occupancy if overlap exists
+                                    if max_st < min_et:
+                                        time_diff = round((min_et - max_st).total_seconds(), 4)
+                                        occupancies.append(time_diff)
 
+                        # Store occupancy data for the current signal type
+                        dict_occupancy_id[f"{signal_type}OccupancyPhase{phase_no}"].append(occupancies)
 
-        # Path (from database directory) to directory where cycle-level vehicle traffic feature (occupancy) will be stored
-        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_traffic",
-            feature_name="occupancy",
-            signal_id=signal_id
-        )
+                # Append the cycle's occupancy data to the DataFrame
+                df_occupancy_id = pd.concat([df_occupancy_id, pd.DataFrame([dict_occupancy_id])], axis=0, ignore_index=True)
 
-        # Save the phase profile data as a pkl file in the export directory
-        export_data(df=df_occupancy_id, 
-                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
-                    sub_dirpath=production_feature_dirpath,
-                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                    file_type="pkl")
+            # Step 8: Add date information
+            df_occupancy_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
-        return df_occupancy_id
-    
+            # Step 9: Calculate statistics for occupancy data
+            columns = [col for col in df_occupancy_id.columns if "Occupancy" in col]
+            df_occupancy_id = self.calculate_stats(df=df_occupancy_id, column_names=columns, include_sum_list=True)
+
+            # Step 10: Save the extracted occupancy data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="occupancy",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_occupancy_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Log success and return the data
+            logging.info(f"Occupancy data successfully extracted and saved for signal ID: {signal_id}")
+            return df_occupancy_id
+
+        except Exception as e:
+            logging.error(f"Error extracting occupancy for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting occupancy for signal ID: {signal_id}", 
+                                sys_module=sys)
+
     def extract_headway(self, signal_id: str):
-        # Load event, configuration, and vehicle cycle profile data
-        df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
-        
-        # Filter event data for the event code sequence: [82] (i.e., detector on)
-        df_event_id = self.filter_by_event_sequence(df_event=df_event_id, 
-                                                    event_sequence=[82])
+        """
+        Extracts headway data for a given signal ID at a cycle level.
 
-        # Drop rows with missing phase no in configuration data
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
-        df_config_id = float_to_int(df_config_id) 
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
 
-        # Filter configuration data for back detector
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])]
-        df_config_id = df_config_id[df_config_id["stopBarDistance"] != 0].reset_index(drop=True)
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing headway data for each cycle and phase.
+        """
+        try:
+            # Step 1: Load required data
+            df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
 
-        # If multiple back detectors exist, consider farthest of the two detectors from stop bar 
-        for phase_no in df_config_id["phaseNo"].unique():
-            df_config_phase = df_config_id[df_config_id["phaseNo"] == phase_no]
+            # Step 2: Filter event data for the event code [82] (detector on events)
+            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[82])
 
-            back_detectors_at = df_config_phase["stopBarDistance"].unique().tolist()
-            if len(back_detectors_at) == 1:
-                continue
-            else:
-                indices = df_config_phase[df_config_phase["stopBarDistance"] == min(back_detectors_at)].index
-                indices = indices.tolist()
+            # Step 3: Clean and filter configuration data
+            # Remove rows with missing phase numbers
+            df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
+            df_config_id = float_to_int(df_config_id)
 
-                df_config_id = df_config_id.drop(index=indices)
+            # Filter configuration data for the back detector
+            df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="back")
 
-        df_config_id = df_config_id.reset_index(drop=True)
-        
-        # Join configuration data with event data 
-        df_event_id = pd.merge(df_event_id, df_config_id, 
-                               how="inner", 
-                               left_on=["eventParam"], right_on=["channelNo"])
+            # Step 4: Join configuration data with event data on channel number
+            df_event_id = pd.merge(df_event_id, df_config_id, 
+                                   how="inner", 
+                                   left_on=["eventParam"], right_on=["channelNo"])
 
-        # Change dtype
-        df_event_id = float_to_int(df_event_id)
-                
-        # Initialize df to store headway data
-        df_headway_id = pd.DataFrame()
+            # Ensure consistent data types
+            df_event_id = float_to_int(df_event_id)
 
-        for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
-            # Extrac signal info
-            signal_id = df_vehicle_cycle_profile_id["signalID"][i] 
+            # Step 5: Initialize an empty DataFrame to store headway data
+            df_headway_id = pd.DataFrame()
 
-            cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
-            cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]; cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
-            cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
-        
-            # Initialize dictionary with signal info to also store phase-specific headway per cycle
-            dict_headway_id = {
-                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
+            # Step 6: Process each cycle in the vehicle cycle profile
+            for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+                # Extract signal and cycle information
+                signal_id = df_vehicle_cycle_profile_id["signalID"][i]
+                cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+                cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+                cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+                cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+
+                # Initialize a dictionary to store headway data for the current cycle
+                dict_headway_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end,
+                    "cycleLength": cycle_length
                 }
 
-            # List all unique phase nos
-            phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
+                # List all unique phase numbers
+                phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
 
-            # Update dictionary to store phase-specific headway per cycle
-            for phase_no in phase_nos:
-                dict_headway_id.update(
-                    {f"greenHeadwayPhase{phase_no}": [[np.nan]], 
-                     f"yellowHeadwayPhase{phase_no}": [[np.nan]], 
-                     f"redClearanceHeadwayPhase{phase_no}": [[np.nan]], f"redHeadwayPhase{phase_no}": [[np.nan]]}
-                )
+                # Add placeholders for phase-specific headway data
+                for phase_no in phase_nos:
+                    dict_headway_id.update({
+                        f"greenHeadwayPhase{phase_no}": [[np.nan]],
+                        f"yellowHeadwayPhase{phase_no}": [[np.nan]],
+                        f"redClearanceHeadwayPhase{phase_no}": [[np.nan]],
+                        f"redHeadwayPhase{phase_no}": [[np.nan]]
+                    })
 
-            # Add signal info to the dictonary
-            dict_headway_id["signalID"] = signal_id; 
-            
-            dict_headway_id["cycleNo"] = cycle_no
-            dict_headway_id["cycleBegin"] = cycle_begin; dict_headway_id["cycleEnd"] = cycle_end
-            dict_headway_id["cycleLength"] = cycle_length
+                # Filter event data within the current cycle
+                df_event_cycle = df_event_id[
+                    (df_event_id["timeStamp"] >= cycle_begin) & 
+                    (df_event_id["timeStamp"] <= cycle_end)
+                ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
 
-            # Filter out all the detector off events within the tolerance, sort, and reset index
-            df_event_cycle = df_event_id[(
-                (df_event_id["timeStamp"] >= cycle_begin) & 
-                (df_event_id["timeStamp"] <= cycle_end)  
-            )]
+                # Step 7: Process each phase and signal type
+                for phase_no in phase_nos:
+                    # Filter event data for the current phase
+                    df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
 
-            df_event_cycle = df_event_cycle.sort_values(by=["timeStamp", "phaseNo", "channelNo"])
-            df_event_cycle = df_event_cycle.reset_index(drop=True)
+                    # Define signal types to process
+                    signal_types = ["green", "yellow", "redClearance", "red"]
 
-            for phase_no in phase_nos:
-                # Filter event data based on phase no, and reset index
-                df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
+                    for signal_type in signal_types:
+                        # Get timestamps for the current signal type and phase
+                        timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
 
-                # Intialize list of signal types
-                signal_types = ["green", "yellow", "redClearance", "red"] 
-                
-                for signal_type in signal_types:
-                    # Get timestamps (format: [(start, end), (start, end), ..., (start, end)]) of the current signal in the current phase
-                    timestamps = df_vehicle_cycle_profile_id.loc[i, f'{signal_type}Phase{phase_no}']
+                        # Ensure timestamps are in list format
+                        if not isinstance(timestamps, list):
+                            timestamps = [timestamps]
 
-                    # Check if the instance is not list (if not, convert to list)
-                    if not isinstance(timestamps, list):
-                        timestamps = [timestamps]
+                        # Skip if no valid timestamps exist
+                        if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
+                            continue
 
-                    # If the current signal doesn't have any timeslot in the current signal type of the phase, continue
-                    if (timestamps == [pd.NaT]) or (all(pd.isna(timestamp) for timestamp in timestamps)):
-                        continue
-
-                    for channel_no in df_event_phase["channelNo"].unique():
-                        # Filter events on channel no, sort, and reset index
-                        df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
-                        df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
-
-                        # Intialize list to append headway per cycle of the current signal for the current channel
+                        # Initialize a list to store headway data for the current signal type
                         headways = [np.nan]
-                        
-                        # Loop through signal times (format: [(start, end), (start, end), ..., (start, end)]
-                        for start_time, end_time in timestamps:
-                            # Filter on signal start and end time, sort, and reset index
-                            df_event_signal = df_event_channel[((df_event_channel["timeStamp"] >= start_time) & 
-                                                                (df_event_channel["timeStamp"] <= end_time))]
-                            df_event_signal = df_event_signal.sort_values(by="timeStamp").reset_index(drop=True)
 
-                            # if there's at most one vehicle, there's no headway
-                            if len(df_event_signal) <= 1:
-                                continue
- 
-                            for j in range(len(df_event_signal) - 1):
-                                # Detector on time when leading and the following (nexy) vehicle passes the back detector
-                                detector_ont_lead = df_event_signal["timeStamp"][j] # ont: on time
-                                detector_ont_next = df_event_signal["timeStamp"][j+1]
+                        for channel_no in df_event_phase["channelNo"].unique():
+                            # Filter event data for the current channel
+                            df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
+                            df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
 
-                                # Calculate the difference between detector on times of the two consecutive vehicles (in sec)
-                                time_diff = round((detector_ont_next - detector_ont_lead).total_seconds(), 4)
+                            # Loop through signal times for the current channel
+                            for start_time, end_time in timestamps:
+                                # Filter event data within the signal's time range
+                                df_event_signal = df_event_channel[
+                                    (df_event_channel["timeStamp"] >= start_time) & 
+                                    (df_event_channel["timeStamp"] <= end_time)
+                                ].sort_values(by="timeStamp").reset_index(drop=True)
 
-                                headways.append(time_diff)
+                                # Skip if less than two vehicles detected (no headway calculation possible)
+                                if len(df_event_signal) <= 1:
+                                    continue
 
+                                # Calculate headway for consecutive vehicles
+                                for j in range(len(df_event_signal) - 1):
+                                    detector_ont_lead = df_event_signal["timeStamp"][j]
+                                    detector_ont_next = df_event_signal["timeStamp"][j+1]
 
-                        # Append phase-specific headway per cycle for the current phase
-                        dict_headway_id[f'{signal_type}HeadwayPhase{phase_no}'].append(headways)
-                        
-            df_headway_id = pd.concat([df_headway_id, pd.DataFrame([dict_headway_id])],
-                                      axis=0, ignore_index=True)
-        
-        # Add date information to the DataFrame
-        df_headway_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+                                    # Compute time difference between consecutive vehicles
+                                    time_diff = round((detector_ont_next - detector_ont_lead).total_seconds(), 4)
+                                    headways.append(time_diff)
 
-        columns = []
-        for column in df_headway_id.columns:
-            if "Headway" in column:
-                columns.append(column)
+                        # Store headway data for the current signal type
+                        dict_headway_id[f"{signal_type}HeadwayPhase{phase_no}"].append(headways)
 
-        # Calculate stats
-        df_headway_id = self.calculate_stats(df=df_headway_id, column_names=columns)
+                # Append the cycle's headway data to the DataFrame
+                df_headway_id = pd.concat([df_headway_id, pd.DataFrame([dict_headway_id])], axis=0, ignore_index=True)
 
-        # Path (from database directory) to directory where cycle-level vehicle traffic feature (headway) will be stored
-        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_traffic",
-            feature_name="headway",
-            signal_id=signal_id
-        )
+            # Step 8: Add date information
+            df_headway_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
-        # Save the phase profile data as a pkl file in the export directory
-        export_data(df=df_headway_id, 
-                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
-                    sub_dirpath=production_feature_dirpath,
-                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                    file_type="pkl")
+            # Step 9: Calculate statistics for headway data
+            columns = [col for col in df_headway_id.columns if "Headway" in col]
+            df_headway_id = self.calculate_stats(df=df_headway_id, column_names=columns)
 
-        return df_headway_id
+            # Step 10: Save the extracted headway data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="headway",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_headway_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Log success and return the data
+            logging.info(f"Headway data successfully extracted and saved for signal ID: {signal_id}")
+            return df_headway_id
+
+        except Exception as e:
+            logging.error(f"Error extracting headway for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting headway for signal ID: {signal_id}", 
+                                sys_module=sys)
     
-    def extract_red_running(self, signal_id: str):
-        # Load event, configuration, and vehicle cycle profile data
-        df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
-        
-        # Filter event data for the event code sequence: [81] (i.e., detector off)
-        df_event_id = self.filter_by_event_sequence(df_event=df_event_id, 
-                                                    event_sequence=[81])
-        
-        # Drop rows with missing phase no in configuration data
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
-        df_config_id = float_to_int(df_config_id) 
+    def extract_red_running(self, signal_id: str, with_countbar: bool = False):
+        """
+        Extracts red light running data for a given signal ID at a cycle level.
 
-        # Filter configuration data for stop bar (front detector)
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])]
-        df_config_id = df_config_id[df_config_id["stopBarDistance"] == 0].reset_index(drop=True)
-        
-        # Join configuration data with event data 
-        df_event_id = pd.merge(df_event_id, df_config_id, 
-                               how="inner", 
-                               left_on=["eventParam"], right_on=["channelNo"])
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
+        with_countbar : bool, optional
+            If True, uses the count bar filter for configuration data.
+            Default is False.
 
-        # Change dtype
-        df_event_id = float_to_int(df_event_id)
-                
-        # Initialize df to store red light running data
-        df_red_running_id = pd.DataFrame()
-        
-        for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
-            # Extrac signal info
-            signal_id = df_vehicle_cycle_profile_id["signalID"][i] 
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing red light running data for each cycle and phase.
+        """
+        try:
+            # Step 1: Load required data
+            df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
 
-            cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
-            cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]; cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
-            cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
-        
-            # Initialize dictionary with signal info to also store phase-specific red light running per cycle
-            dict_red_running_id = {
-                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
+            # Step 2: Filter event data for the event code sequence [81] (detector off events)
+            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81])
+
+            # Step 3: Clean and filter configuration data
+            # Remove rows with missing phase numbers
+            df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
+            df_config_id = float_to_int(df_config_id)
+
+            # Apply the appropriate configuration filter based on the with_countbar flag
+            if with_countbar:
+                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="count")
+            else:
+                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="front")
+
+            # Step 4: Join configuration data with event data on channel number
+            df_event_id = pd.merge(df_event_id, df_config_id, 
+                                    how="inner", 
+                                    left_on=["eventParam"], right_on=["channelNo"])
+
+            # Ensure consistent data types
+            df_event_id = float_to_int(df_event_id)
+
+            # Step 5: Initialize an empty DataFrame to store red light running data
+            df_red_running_id = pd.DataFrame()
+
+            # Step 6: Process each cycle in the vehicle cycle profile
+            for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+                # Extract signal and cycle information
+                signal_id = df_vehicle_cycle_profile_id["signalID"][i]
+                cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+                cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+                cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+                cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+
+                # Initialize a dictionary to store red light running data for the current cycle
+                dict_red_running_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end,
+                    "cycleLength": cycle_length
                 }
 
-            # List all unique phase nos
-            phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
+                # List all unique phase numbers
+                phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
 
-            # Update dictionary to store phase-specific red light running per cycle
-            for phase_no in phase_nos:
-                dict_red_running_id.update(
-                    {f"redClearanceRunningFlagPhase{phase_no}": 0, f"redRunningFlagPhase{phase_no}": 0}
-                )
+                # Add placeholders for red light running flags for each phase
+                for phase_no in phase_nos:
+                    dict_red_running_id.update({
+                        f"redClearanceRunningFlagPhase{phase_no}": 0,
+                        f"redRunningFlagPhase{phase_no}": 0
+                    })
 
-            # Add signal info to the dictonary
-            dict_red_running_id["signalID"] = signal_id; 
-            
-            dict_red_running_id["cycleNo"] = cycle_no
-            dict_red_running_id["cycleBegin"] = cycle_begin; dict_red_running_id["cycleEnd"] = cycle_end
-            dict_red_running_id["cycleLength"] = cycle_length
+                # Filter event data within the current cycle
+                df_event_cycle = df_event_id[
+                    (df_event_id["timeStamp"] >= cycle_begin) & 
+                    (df_event_id["timeStamp"] <= cycle_end)
+                ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
 
-            # Filter out all the detector off events within the tolerance, sort, and reset index
-            df_event_cycle = df_event_id[(
-                (df_event_id["timeStamp"] >= cycle_begin) & 
-                (df_event_id["timeStamp"] <= cycle_end)  
-            )]
+                # Step 7: Process each phase and signal type
+                for phase_no in phase_nos:
+                    # Filter event data for the current phase
+                    df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
 
-            df_event_cycle = df_event_cycle.sort_values(by=["timeStamp", "phaseNo", "channelNo"])
-            df_event_cycle = df_event_cycle.reset_index(drop=True)
+                    # Define signal types to process
+                    signal_types = ["redClearance", "red"]
 
-            for phase_no in phase_nos:
-                # Filter event data based on phase no, and reset index
-                df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
+                    for signal_type in signal_types:
+                        # Get timestamps for the current signal type and phase
+                        timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
 
-                # Intialize list of signal types
-                signal_types = ["redClearance", "red"] 
-                
-                for signal_type in signal_types:
-                    # Get timestamps (format: [(start, end), (start, end), ..., (start, end)]) of the current signal in the current phase
-                    timestamps = df_vehicle_cycle_profile_id.loc[i, f'{signal_type}Phase{phase_no}']
+                        # Ensure timestamps are in list format
+                        if not isinstance(timestamps, list):
+                            timestamps = [timestamps]
 
-                    # Check if the instance is not list (if not, convert to list)
+                        # Skip if no valid timestamps exist
+                        if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
+                            continue
+
+                        # Initialize a flag to indicate red light running for the current signal type
+                        red_running_flag = 0
+
+                        for channel_no in df_event_phase["channelNo"].unique():
+                            # Filter event data for the current channel
+                            df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
+                            df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
+
+                            # Loop through signal times for the current channel
+                            for start_time, end_time in timestamps:
+                                for j in range(len(df_event_channel)):
+                                    # Get the time of the detector off event
+                                    timestamp = df_event_channel.loc[j, "timeStamp"]
+
+                                    # Check if the event occurred during the signal's active period
+                                    if (timestamp >= start_time) & (timestamp <= end_time):
+                                        red_running_flag = 1
+                                        break
+
+                        # Update the flag in the dictionary for the current signal type and phase
+                        dict_red_running_id[f"{signal_type}RunningFlagPhase{phase_no}"] = red_running_flag
+
+                # Append the cycle's red light running data to the DataFrame
+                df_red_running_id = pd.concat([df_red_running_id, pd.DataFrame([dict_red_running_id])],
+                                            axis=0, ignore_index=True)
+
+            # Step 8: Add date information
+            df_red_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
+
+            # Step 9: Save the extracted red light running data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="red_running",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_red_running_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Log success and return the data
+            logging.info(f"Red running data successfully extracted and saved for signal ID: {signal_id}")
+            return df_red_running_id
+
+        except Exception as e:
+            logging.error(f"Error extracting red running for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting red running for signal ID: {signal_id}", 
+                                sys_module=sys)
+
+        
+    def extract_dilemma_running(self, signal_id: str, with_countbar: bool = False):
+        """
+        Extracts dilemma zone running data for a given signal ID at a cycle level.
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
+        with_countbar : bool, optional
+            If True, uses the count bar filter for configuration data.
+            Default is False.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing dilemma zone running data for each cycle and phase.
+        """
+        try:
+            # Step 1: Load necessary data
+            df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
+
+            # Step 2: Filter event data for the event code sequence [81] (detector off events)
+            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81])
+
+            # Step 3: Clean and filter configuration data
+            # Remove rows with missing phase numbers
+            df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
+            df_config_id = float_to_int(df_config_id)
+
+            # Apply the appropriate configuration filter based on the `with_countbar` flag
+            if with_countbar:
+                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="count")
+            else:
+                df_config_id = self.filter_config_by_detector(df_config=df_config_id, detector_type="front")
+
+            # Step 4: Merge configuration data with event data based on the channel number
+            df_event_id = pd.merge(df_event_id, df_config_id, 
+                                   how="inner", 
+                                   left_on=["eventParam"], right_on=["channelNo"])
+
+            # Ensure consistent data types after merging
+            df_event_id = float_to_int(df_event_id)
+
+            # Step 5: Initialize an empty DataFrame to store dilemma zone running data
+            df_dilemma_running_id = pd.DataFrame()
+
+            # Step 6: Process each cycle in the vehicle cycle profile
+            for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+                # Extract signal and cycle information
+                signal_id = df_vehicle_cycle_profile_id["signalID"][i]
+                cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+                cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+                cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+                cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+
+                # Initialize a dictionary to store dilemma zone running data for the current cycle
+                dict_dilemma_running_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end,
+                    "cycleLength": cycle_length
+                }
+
+                # List all unique phase numbers
+                phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
+
+                # Add placeholders for dilemma zone running flags for each phase
+                for phase_no in phase_nos:
+                    dict_dilemma_running_id[f"yellowRunningFlagPhase{phase_no}"] = 0
+
+                # Step 7: Filter event data for the current cycle
+                df_event_cycle = df_event_id[
+                    (df_event_id["timeStamp"] >= cycle_begin) & 
+                    (df_event_id["timeStamp"] <= cycle_end)
+                ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
+
+                # Step 8: Process each phase and signal type
+                for phase_no in phase_nos:
+                    # Filter event data for the current phase
+                    df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
+
+                    # Define signal type to process (yellow phase)
+                    signal_type = "yellow"
+
+                    # Retrieve timestamps for the yellow phase of the current cycle
+                    timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
+
+                    # Ensure timestamps are in list format
                     if not isinstance(timestamps, list):
                         timestamps = [timestamps]
 
-                    # If the current signal doesn't have any timeslot in the current signal type of the phase, continue
-                    if (timestamps == [pd.NaT]) or (all(pd.isna(timestamp) for timestamp in timestamps)):
+                    # Skip if no valid timestamps exist
+                    if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
                         continue
-                    
-                    # Intialize indicator of detecting red light running flag
-                    red_running_flag = 0
 
-                    for channel_no in df_event_phase["channelNo"].unique():
-                        # Filter events on channel no, sort, and reset index
-                        df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
-                        df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
-                        
-                        # Loop through signal times (format: [(start, end), (start, end), ..., (start, end)]
-                        for start_time, end_time in timestamps:
-                            for j in range(len(df_event_channel)):
-                                # Get the time of the detector off event
-                                timestamp = df_event_channel.loc[j, 'timeStamp']
-
-                                # If the timestamp for the event is within the start and end time of current signal ('red clearance' or 'red'), there's a red run
-                                if (timestamp >= start_time) & (timestamp <= end_time):
-                                    red_running_flag = 1
-                                    break
-                                
-                    dict_red_running_id[f'{signal_type}RunningFlagPhase{phase_no}'] = red_running_flag
-
-                        
-            df_red_running_id = pd.concat([df_red_running_id, pd.DataFrame([dict_red_running_id])],
-                                          axis=0, ignore_index=True)
-        
-        # Add date information to the DataFrame
-        df_red_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
-
-        # Path (from database directory) to directory where cycle-level vehicle traffic feature (red running) will be stored
-        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_traffic",
-            feature_name="red_running",
-            signal_id=signal_id
-        )
-
-        # Save the phase profile data as a pkl file in the export directory
-        export_data(df=df_red_running_id, 
-                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
-                    sub_dirpath=production_feature_dirpath,
-                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                    file_type="pkl")
-
-        return df_red_running_id
-        
-    def extract_dilemma_running(self, signal_id: str):
-        # Load event, configuration, and vehicle cycle profile data
-        df_event_id, df_config_id, df_vehicle_cycle_profile_id = self._load_data(signal_id=signal_id)
-        
-        # Filter event data for the event code sequence: [81] (i.e., detector off)
-        df_event_id = self.filter_by_event_sequence(df_event=df_event_id, 
-                                                    event_sequence=[81])
-        
-        # Drop rows with missing phase no in configuration data
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
-        df_config_id = float_to_int(df_config_id) 
-
-        # Filter configuration data for stop bar (front detector)
-        df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])]
-        df_config_id = df_config_id[df_config_id["stopBarDistance"] == 0].reset_index(drop=True)
-        
-        # Join configuration data with event data 
-        df_event_id = pd.merge(df_event_id, df_config_id, 
-                               how="inner", 
-                               left_on=["eventParam"], right_on=["channelNo"])
-
-        # Change dtype
-        df_event_id = float_to_int(df_event_id)
-                
-        # Initialize df to store dilemma zone running data
-        df_dilemma_running_id = pd.DataFrame()
-
-        for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
-            # Extrac signal info
-            signal_id = df_vehicle_cycle_profile_id["signalID"][i] 
-
-            cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
-            cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]; cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
-            cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
-        
-            # initialize dictionary
-            dict_dilemma_running_id = {
-                "signalID": "0", "cycleNo": 0, "cycleBegin": pd.NaT, "cycleEnd": pd.NaT, "cycleLength": 0
-                }
-
-            # List all unique phase nos
-            phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
-
-            # Update dictionary to store phase-specific dilemma zone running per cycle
-            for phase_no in phase_nos:
-                dict_dilemma_running_id.update(
-                    {f"yellowRunningFlagPhase{phase_no}": 0}
-                )
-
-            # Add signal info to the dictonary
-            dict_dilemma_running_id["signalID"] = signal_id; 
-            
-            dict_dilemma_running_id["cycleNo"] = cycle_no
-            dict_dilemma_running_id["cycleBegin"] = cycle_begin; dict_dilemma_running_id["cycleEnd"] = cycle_end
-            dict_dilemma_running_id["cycleLength"] = cycle_length
-
-            # Filter out all the detector off events within the tolerance, sort, and reset index
-            df_event_cycle = df_event_id[(
-                (df_event_id["timeStamp"] >= cycle_begin) & 
-                (df_event_id["timeStamp"] <= cycle_end)  
-            )]
-
-            df_event_cycle = df_event_cycle.sort_values(by=["timeStamp", "phaseNo", "channelNo"])
-            df_event_cycle = df_event_cycle.reset_index(drop=True)
-
-            for phase_no in phase_nos:
-                # Filter event data based on phase no, and reset index
-                df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
-
-                # Intialize list of signal types
-                signal_types = ["yellow"] 
-                
-                for signal_type in signal_types:
-                    # Get timestamps (format: [(start, end), (start, end), ..., (start, end)]) of the current signal in the current phase
-                    timestamps = df_vehicle_cycle_profile_id.loc[i, f'{signal_type}Phase{phase_no}']
-
-                    # Check if the instance is not list (if not, convert to list)
-                    if not isinstance(timestamps, list):
-                        timestamps = [timestamps]
-
-                    # If the current signal doesn't have any timeslot in the current signal type of the phase, continue
-                    if (timestamps == [pd.NaT]) or (all(pd.isna(timestamp) for timestamp in timestamps)):
-                        continue
-                    
-                    # Intialize indicator of detecting dilemma zone running flag
+                    # Initialize a flag to indicate dilemma zone running for the current phase
                     dilemma_running_flag = 0
 
+                    # Step 9: Check for dilemma zone running events
                     for channel_no in df_event_phase["channelNo"].unique():
-                        # Filter events on channel no, sort, and reset index
+                        # Filter event data for the current channel
                         df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
                         df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
-                        
-                        # Loop through signal times (format: [(start, end), (start, end), ..., (start, end)]
+
+                        # Loop through yellow phase signal times
                         for start_time, end_time in timestamps:
                             for j in range(len(df_event_channel)):
-                                # Get the time of the detector off event
-                                timestamp = df_event_channel.loc[j, 'timeStamp']
+                                # Get the timestamp of the detector off event
+                                timestamp = df_event_channel.loc[j, "timeStamp"]
 
-                                # If the timestamp for the event is within the start and end time of current signal ('red clearance' or 'red'), there's a red run
+                                # If the event occurred within the yellow phase signal period, set the flag
                                 if (timestamp >= start_time) & (timestamp <= end_time):
                                     dilemma_running_flag = 1
                                     break
-                                
-                    dict_dilemma_running_id[f'{signal_type}RunningFlagPhase{phase_no}'] = dilemma_running_flag
 
-                        
-            df_dilemma_running_id = pd.concat([df_dilemma_running_id, pd.DataFrame([dict_dilemma_running_id])],
-                                              axis=0, ignore_index=True)
-        
-        # Add date information to the DataFrame
-        df_dilemma_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
+                    # Update the dictionary with the dilemma zone running flag for the current phase
+                    dict_dilemma_running_id[f"{signal_type}RunningFlagPhase{phase_no}"] = dilemma_running_flag
 
-        # Path (from database directory) to directory where cycle-level vehicle traffic feature (dilemma running) will be stored
-        _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
-            resolution_level="cycle",
-            event_type="vehicle_traffic",
-            feature_name="dilemma_running",
-            signal_id=signal_id
-        )
+                # Append the current cycle's data to the DataFrame
+                df_dilemma_running_id = pd.concat([df_dilemma_running_id, pd.DataFrame([dict_dilemma_running_id])],
+                                                axis=0, ignore_index=True)
 
-        # Save the phase profile data as a pkl file in the export directory
-        export_data(df=df_dilemma_running_id, 
-                    base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
-                    sub_dirpath=production_feature_dirpath,
-                    filename=f"{self.year}-{self.month:02d}-{self.day:02d}", 
-                    file_type="pkl")
+            # Step 10: Add date information to the DataFrame
+            df_dilemma_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-        return df_dilemma_running_id
+            # Step 11: Save the extracted dilemma zone running data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="dilemma_running",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_dilemma_running_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Log success and return the data
+            Logger.info(f"Dilemma running data successfully extracted and saved for signal ID: {signal_id}")
+            return df_dilemma_running_id
+
+        except Exception as e:
+            Logger.error(f"Error extracting dilemma running for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting dilemma running for signal ID: {signal_id}", 
+                                sys_module=sys)
+
 
 
 
