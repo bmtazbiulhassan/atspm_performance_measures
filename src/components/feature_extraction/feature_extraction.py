@@ -4,6 +4,7 @@ import yaml
 import tqdm
 import sys
 import os
+from collections import Counter
 
 from src.exception import CustomException
 from src.logger import logging
@@ -1469,7 +1470,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 df_spat_id[column] = df_spat_id[column] * df_spat_id["cycleLength"]
 
             # Step 4: Extract green occupancy columns from occupancy data
-            occupancy_columns = [col for col in df_occupancy_id.columns if "greenOccupancyPhase" in col]
+            occupancy_columns = [col for col in df_occupancy_id.columns if "greenSumListOccupancyPhase" in col]
 
             # Keep only relevant columns in occupancy data
             df_occupancy_id = df_occupancy_id[["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"] + occupancy_columns]
@@ -1481,10 +1482,19 @@ class TrafficFeatureExtract(CoreEventUtils):
                 on=["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"]
             )
 
-            # Step 6: Validate column pairs for phases
             columns = spat_columns + occupancy_columns
-            if len(columns) % 2 != 0:
-                raise ValueError("Mismatched number of SPaT and occupancy columns.")
+
+            # Extract phases after 'Phase'
+            phase_nos = [col.split('Phase')[-1] for col in columns if 'Phase' in col]
+
+            # Find duplicate phases (phases appearing in multiple categories like Ratio and SumListOccupancy)
+            dict_phase_counts = Counter(phase_nos)
+
+            # Keep only those phases that appear at least twice (indicating a pair)
+            phase_nos = [phase_no for phase_no, count in dict_phase_counts.items() if count > 1]
+
+            # Filter the columns to include only valid phases
+            columns = [col for col in columns if any(f"Phase{phase_no}" in col for phase_no in phase_nos)]
 
             columns = sorted(columns, key=lambda x: x[-1])
 
@@ -1503,10 +1513,10 @@ class TrafficFeatureExtract(CoreEventUtils):
                     axis=1
                 )
 
-                # Convert to binary flags: 1 if any occupancy exceeds 99% of green time, else 0
+                # Convert to binary flags: 1 if any occupancy exceeds 100% of green time, else 0
                 df_split_failure_id[f"greenSplitFailurePhase{phase_no}"] = df_split_failure_id[
                     f"greenSplitFailurePhase{phase_no}"
-                ].apply(lambda vals: 1 if any(val >= 0.99 for val in vals) else 0)
+                ].apply(lambda vals: 1 if any(val >= 1 for val in vals) else 0)
 
                 # Drop the intermediate columns for this phase
                 df_split_failure_id = df_split_failure_id.drop(columns=[spat_column, occupancy_column])
