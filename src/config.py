@@ -62,12 +62,16 @@ class DataIngestionDirpath:
             district=self.district, 
             table_id=table_id
         )
+
+        if month is not None:
+            month = f"{month:02d}"
+            
         
         # Directory path within the base directory to store ATSPM event data, formatted by district, year, and month
         raw_event_dirpath = config["raw_event_dirpath"].format(
             district=self.district, 
-            year=f"{year}", 
-            month=f"{month:02d}"
+            year=year, 
+            month=month
         )
         
         return raw_report_dirpath, raw_event_dirpath
@@ -91,11 +95,14 @@ class DataIngestionDirpath:
             A tuple containing the base directory path where event data is stored and the interim directory path 
             for storing sorted event data based on the specified district, year, month, and signal ID.
         """
+        if month is not None:
+            month = f"{month:02d}"
+            
         # Directory path within the base directory where ATSPM event data, formatted by district, year, and month, is stored.
         raw_event_dirpath = config["raw_event_dirpath"].format(
             district=self.district, 
-            year=f"{year}", 
-            month=f"{month:02d}"
+            year=year, 
+            month=month
         )
 
         # Directory path within the base directory to store sorted ATSPM event data, formatted by district, and signal ID
