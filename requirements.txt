@@ -9,5 +9,7 @@ selenium
 webdriver_manager
 pyyaml
 bs4
+psutil
+rich
 
 # -e .
