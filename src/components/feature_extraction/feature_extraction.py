@@ -1842,40 +1842,42 @@ class TrafficFeatureExtract(CoreEventUtils):
                             df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
                             df_event_channel = df_event_channel.sort_values(by="timeStamp").reset_index(drop=True)
 
-                            # Assign sequence IDs to on/off events
-                            df_event_channel = df_event_channel.copy()
-                            df_event_channel["sequenceID"] = self.add_event_sequence_id(
-                                df_event_channel, valid_event_sequence=[82, 81]
-                            )
+                            if with_countbar:
+                                # Assign sequence IDs to on/off events
+                                df_event_channel = df_event_channel.copy()
+                                df_event_channel["sequenceID"] = self.add_event_sequence_id(
+                                    df_event_channel, valid_event_sequence=[82, 81]
+                                )
+                                
+                                # Loop through signal times for the current channel
+                                for start_time, end_time in timestamps:
+                                    for sequence_id in df_event_channel["sequenceID"].unique():
+                                        # Filter events for the current sequence
+                                        df_event_sequence = df_event_channel[df_event_channel["sequenceID"] == sequence_id].reset_index(drop=True)
 
-                            for start_time, end_time in timestamps:
-                                for sequence_id in df_event_channel["sequenceID"].unique():
-                                    # Filter events for the current sequence
-                                    df_event_sequence = df_event_channel[df_event_channel["sequenceID"] == sequence_id].reset_index(drop=True)
+                                        # Skip incomplete sequences (missing on/off events)
+                                        if len(df_event_sequence) != 2:
+                                            continue
 
-                                    # Skip incomplete sequences (missing on/off events)
-                                    if len(df_event_sequence) != 2:
-                                        continue
+                                        # Extract detector on/off times
+                                        detector_ont = df_event_sequence["timeStamp"][0]
+                                        detector_oft = df_event_sequence["timeStamp"][1]
 
-                                    # Extract detector on/off times
-                                    detector_ont = df_event_sequence["timeStamp"][0]
-                                    detector_oft = df_event_sequence["timeStamp"][1]
+                                        # Check if the event occurred during the signal's active period
+                                        if (detector_ont >= start_time) and (detector_oft <= end_time):
+                                            red_running_flag = 1
+                                            break
+                            else:
+                                # Loop through signal times for the current channel
+                                for start_time, end_time in timestamps:
+                                    for j in range(len(df_event_channel)):
+                                        # Get the time of the detector off event
+                                        timestamp = df_event_channel.loc[j, "timeStamp"]
 
-                                    # Check if the event occurred during the signal's active period
-                                    if (detector_ont >= start_time) and (detector_oft <= end_time):
-                                        red_running_flag = 1
-                                        break
-
-                            # # Loop through signal times for the current channel
-                            # for start_time, end_time in timestamps:
-                            #     for j in range(len(df_event_channel)):
-                            #         # Get the time of the detector off event
-                            #         timestamp = df_event_channel.loc[j, "timeStamp"]
-
-                            #         # Check if the event occurred during the signal's active period
-                            #         if (timestamp >= start_time) & (timestamp <= end_time):
-                            #             red_running_flag = 1
-                            #             break
+                                        # Check if the event occurred during the signal's active period
+                                        if (timestamp >= start_time) & (timestamp <= end_time):
+                                            red_running_flag = 1
+                                            break
 
                         # Update the flag in the dictionary for the current signal type and phase
                         dict_red_running_id[f"{signal_type}RunningFlagPhase{phase_no}"] = red_running_flag

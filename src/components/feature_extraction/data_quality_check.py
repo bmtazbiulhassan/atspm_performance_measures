@@ -1,7 +1,7 @@
 import pandas as pd
-import glob
+# import glob
 import yaml
-import tqdm
+# import tqdm
 import sys
 import os
 
@@ -46,14 +46,14 @@ class DataQualityCheck:
         """
         self.event_type = event_type
 
-    def check_data_quality(self, signal_ids: list,day: int, month: int, year: int):
+    def check_data_quality(self, signal_id: list,day: int, month: int, year: int):
         """
         Perform data quality checks on ATSPM event data by analyzing event sequences.
 
         Parameters:
         -----------
-        signal_ids : list
-            List of specific signal IDs to process.
+        signal_id : list
+            Unique identifier for the traffic signal.
         day : int
             Day of the date (1-31) to filter data by.
         month : int
@@ -66,106 +66,110 @@ class DataQualityCheck:
         None: The function saves the preprocessed data as a CSV file in the specified export directory.
         """
         try:
-            for signal_id in tqdm.tqdm(signal_ids):
-                # Path (from database directory) to directory where sorted event and signal configuration data are stored
-                interim_event_dirpath, interim_config_dirpath, _ = feature_extraction_dirpath.get_data_quality_check_dirpath(signal_id=signal_id)
+            # Path (from database directory) to directory where sorted event and signal configuration data are stored
+            interim_event_dirpath, interim_config_dirpath, _ = feature_extraction_dirpath.get_data_quality_check_dirpath(signal_id=signal_id)
 
-                # Absolute directory path to stored sorted event data
-                event_dirpath = os.path.join(root_dir, relative_interim_database_dirpath, interim_event_dirpath)
+            # # Absolute directory path to stored sorted event data
+            # event_dirpath = os.path.join(root_dir, relative_interim_database_dirpath, interim_event_dirpath)
 
-                if not os.path.isdir(event_dirpath):
-                    continue
+            try:
+                # Load event data
+                df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
+                                        sub_dirpath= interim_event_dirpath,
+                                        filename=f"{year}-{month:02d}-{day:02d}", 
+                                        file_type="pkl")
 
-                try:
-                    # Load event data
-                    df_event_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath), 
-                                            sub_dirpath= interim_event_dirpath,
-                                            filename=f"{year}-{month:02d}-{day:02d}", 
-                                            file_type="pkl")
+                # Load signal configuraiton data
+                df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
+                                         sub_dirpath=interim_config_dirpath, 
+                                         filename=f"{signal_id}",
+                                         file_type="csv")
+                
+            except FileNotFoundError as e:
+                logging.error(f"File not found: {e}")
+                raise CustomException(custom_message=f"File not found: {e}", sys_module=sys)
 
-                    # Load signal configuraiton data
-                    df_config_id = load_data(base_dirpath=os.path.join(root_dir, relative_interim_database_dirpath),
-                                             sub_dirpath=interim_config_dirpath, 
-                                             filename=f"{signal_id}",
-                                             file_type="csv")
-                    
-                except FileNotFoundError as e:
-                    logging.error(f"File not found: {e}")
-                    raise CustomException(custom_message=f"File not found: {e}", sys_module=sys)
+            # Get column names dynamically based on partial matches
+            dict_column_names = {
+                "param": get_column_name_by_partial_name(df=df_event_id, partial_name="param"),
+                "code": get_column_name_by_partial_name(df=df_event_id, partial_name="code"),
 
-                # Filter event data by the specified day
-                try:
-                    df_event_id = core_event_utils.filter_by_day(df_event=df_event_id, day=day, month=month, year=year)
-                except Exception as e:
-                    logging.error("Error filtering data by date.")
-                    raise CustomException(custom_message=f"Error filtering data by date: {e}", sys_module=sys)
+                "intersectionType": get_column_name_by_partial_name(df=df_config_id, partial_name="intersection"),
+                "district": get_column_name_by_partial_name(df=df_config_id, partial_name="district"),
+                "county": get_column_name_by_partial_name(df=df_config_id, partial_name="county")
+            }
 
-                # Get column names dynamically based on partial matches
-                dict_column_names = {
-                    "param": get_column_name_by_partial_name(df=df_event_id, partial_name="param"),
-                    "code": get_column_name_by_partial_name(df=df_event_id, partial_name="code"),
+            # Retrieve valid event sequences from configuration
+            dict_valid_event_sequence = config["sunstore"]["valid_event_sequence"]
 
-                    "intersectionType": get_column_name_by_partial_name(df=df_config_id, partial_name="intersection"),
-                    "district": get_column_name_by_partial_name(df=df_config_id, partial_name="district"),
-                    "county": get_column_name_by_partial_name(df=df_config_id, partial_name="county")
-                }
-
-                # Retrieve valid event sequences from configuration
-                dict_valid_event_sequence = config["sunstore"]["valid_event_sequence"]
-
-                # Check if the specified event type is valid and retrieve corresponding event sequence
-                if self.event_type in dict_valid_event_sequence:
-                    valid_event_sequence = dict_valid_event_sequence[self.event_type]
-                    unique_params, error_sequence_counter, correct_sequence_counter = self.inspect_sequence(
-                        df_event=df_event_id,
-                        event_param_column_name=dict_column_names["param"],
-                        valid_event_sequence=valid_event_sequence
+            # Check if the specified event type is valid and retrieve corresponding event sequence
+            if self.event_type in dict_valid_event_sequence:
+                valid_event_sequence = dict_valid_event_sequence[self.event_type]
+                unique_params, error_sequence_counter, correct_sequence_counter = self.inspect_sequence(
+                    df_event=df_event_id,
+                    event_param_column_name=dict_column_names["param"],
+                    valid_event_sequence=valid_event_sequence
+                )
+            else:
+                logging.error(f"{self.event_type} is not valid.")
+                raise CustomException(
+                    custom_message=f"{self.event_type} is not valid. Must be 'vehicle_signal' or 'vehicle_traffic'.", 
+                    sys_module=sys
                     )
-                else:
-                    logging.error(f"{self.event_type} is not valid.")
-                    raise CustomException(
-                        custom_message=f"{self.event_type} is not valid. Must be 'vehicle_signal' or 'vehicle_traffic'.", 
-                        sys_module=sys
-                        )
-                
-                # Initialize a dictionary to store data quality check information
-                int_keys = [
-                    'errorSequenceCount', 'correctSequenceCount', 'errorSequencePercent', 'correctSequencePercent'
-                ]
-                dict_quality_check_id = create_dict(int_keys=int_keys)
+            
+            # Initialize dataframe
+            df_quality_check_id = pd.DataFrame()
 
-                # Update dictionary with error and correct sequence counts and percentages
-                total_sequences = error_sequence_counter + correct_sequence_counter
+            # Add signal ID and unique parameters to DataFrame
+            df_quality_check_id["signalID"] = [signal_id] * len(unique_params)
 
-                dict_quality_check_id['errorSequenceCount'] = error_sequence_counter
-                dict_quality_check_id['correctSequenceCount'] = correct_sequence_counter
-                dict_quality_check_id['errorSequencePercent'] = (error_sequence_counter / (total_sequences + 1)) * 100
-                dict_quality_check_id['correctSequencePercent'] = (correct_sequence_counter / (total_sequences + 1)) * 100
+            column_suffix = "phaseNo" if self.event_type == "vehicle_signal" else "channelNo"
+            df_quality_check_id[column_suffix] = unique_params
 
-                # Convert to DataFrame for easier export
-                df_quality_check_id = pd.DataFrame(dict_quality_check_id)
+            # Add additional attributes from configuration data
+            df_quality_check_id["intersectionType"] = get_single_unique_value(df=df_config_id, column_name=dict_column_names["intersectionType"])
+            df_quality_check_id["district"] = get_single_unique_value(df=df_config_id, column_name=dict_column_names["district"])
+            df_quality_check_id["county"] = get_single_unique_value(df=df_config_id, column_name=dict_column_names["county"])
+            
+            # Add quality insights
+            df_quality_check_id["errorSequenceCount"] = error_sequence_counter
+            df_quality_check_id["correctSequenceCount"] = correct_sequence_counter
 
-                # Add signal ID and unique parameters to DataFrame
-                column_suffix = "phaseNo" if self.event_type == "vehicle_signal" else "channelNo"
-                df_quality_check_id[column_suffix] = unique_params
+            df_quality_check_id["errorSequencePercent"] = (
+                round((df_quality_check_id["errorSequenceCount"] / (df_quality_check_id["errorSequenceCount"] + df_quality_check_id["correctSequenceCount"] + 1)) * 100, 2)
+            )
 
-                # Add additional attributes from configuration data
-                df_quality_check_id["intersectionType"] = get_single_unique_value(df=df_config_id, column_name=dict_column_names["intersectionType"])
-                df_quality_check_id["district"] = get_single_unique_value(df=df_config_id, column_name=dict_column_names["district"])
-                df_quality_check_id["county"] = get_single_unique_value(df=df_config_id, column_name=dict_column_names["county"])
-                
-                # Add date information
-                df_quality_check_id["date"] = pd.Timestamp(f"{year}-{month}-{day}").date()
+            df_quality_check_id["correctSequencePercent"] = (
+                round((100 - df_quality_check_id["errorSequencePercent"]), 4)
+            )
 
-                # Path (from database directory) to directory where sorted event and signal configuration data are stored
-                _, _, production_check_dirpath = feature_extraction_dirpath.get_data_quality_check_dirpath(event_type=self.event_type)
+            # Add date information
+            df_quality_check_id["date"] = pd.Timestamp(f"{year}-{month}-{day}").date()
 
-                # Save the quality check report as a CSV file in the export directory
-                export_data(df=df_quality_check_id, 
-                            base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
-                            sub_dirpath=production_check_dirpath,
-                            filename=f"{signal_id}", 
-                            file_type="csv")
+            # Path (from database directory) to directory where sorted event and signal configuration data are stored
+            _, _, production_check_dirpath = feature_extraction_dirpath.get_data_quality_check_dirpath(event_type=self.event_type)
+            
+            # Get filepath
+            filepath = os.path.join(root_dir, relative_production_database_dirpath, production_check_dirpath, f"{signal_id}.csv")
+            
+            # Append existing file with current check result
+            if os.path.exists(filepath):
+                df_quality_check_id = pd.concat([pd.read_csv(filepath), df_quality_check_id], 
+                                                axis=0, ignore_index=True)
+
+            # Drop duplicates, if exist
+            df_quality_check_id = (
+                df_quality_check_id.drop_duplicates()
+                                   .sort_values(by=["date", f"{column_suffix}"])
+                                   .reset_index(drop=True)
+            )
+
+            # Save the quality check report as a CSV file in the export directory
+            export_data(df=df_quality_check_id, 
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath), 
+                        sub_dirpath=production_check_dirpath,
+                        filename=f"{signal_id}", 
+                        file_type="csv")
 
         except Exception as e:
             logging.error("Error in check_data_quality function")
