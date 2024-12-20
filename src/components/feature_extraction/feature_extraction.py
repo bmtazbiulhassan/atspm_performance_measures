@@ -237,7 +237,7 @@ class CoreEventUtils:
             # Select columns for aggregation (only float columns)
             columns = [
                 col for col in df.columns 
-                if col not in ["signalID", "date", "hour"] and df[col].dtype == "float"
+                if col not in ["signalID", "date", "hour"] and df[col].dtype != "O"
             ]
 
             if only_sum:
@@ -934,7 +934,7 @@ class SignalFeatureExtract(CoreEventUtils):
 
             # Log success and return the data
             logging.info(f"SPaT data successfully extracted and saved for signal ID: {signal_id}")
-            return df_spat_id, df_spat_id_hourly
+            return df_spat_id
 
         except Exception as e:
             # Handle and log any errors
@@ -1367,7 +1367,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Log successful extraction
             logging.info(f"Volume data successfully extracted and saved for signal ID: {signal_id}")
-            return df_volume_id, df_volume_id_hourly
+            return df_volume_id
 
         except Exception as e:
             logging.error(f"Error extracting volume for signal ID: {signal_id}: {e}")
@@ -1568,7 +1568,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Log success and return the data
             logging.info(f"Occupancy data successfully extracted and saved for signal ID: {signal_id}")
-            return df_occupancy_id, df_occupancy_id_hourly
+            return df_occupancy_id
 
         except Exception as e:
             logging.error(f"Error extracting occupancy for signal ID: {signal_id}: {e}")
@@ -1719,7 +1719,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             )
 
             # Return the resulting DataFrame
-            return df_split_failure_id, df_split_failure_id_hourly
+            return df_split_failure_id
 
         except Exception as e:
             # Log errors and raise a custom exception for debugging
@@ -1901,13 +1901,143 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Log success and return the data
             logging.info(f"Headway data successfully extracted and saved for signal ID: {signal_id}")
-            return df_headway_id, df_headway_id_hourly
+            return df_headway_id
 
         except Exception as e:
             logging.error(f"Error extracting headway for signal ID: {signal_id}: {e}")
             raise CustomException(custom_message=f"Error extracting headway for signal ID: {signal_id}", 
                                 sys_module=sys)
-    
+        
+    def extract_conflict(self, signal_id: str, thresholds: list = np.arange(0.5, 5.5, 0.5)):
+        """
+        Extracts conflict information for a given signal ID using headway data.
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
+        thresholds : list, optional
+            List of headway thresholds (in seconds) to define conflicts. Default is np.arange(0.5, 5.5, 0.5).
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing conflict counts (e.g., counts of headway <0.5, <1.0, etc.) for each phase and cycle.
+
+        Raises:
+        -------
+        CustomException
+            Raised if any error occurs during the extraction process.
+        """
+        try:
+            # Log the start of the conflict extraction process
+            logging.info(f"Starting conflict extraction for signal ID: {signal_id}")
+
+            # Load headway data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="headway",
+                signal_id=signal_id
+            )
+            df_headway_id = load_data(
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Filter columns containing headway data
+            headway_columns = [
+                col for col in df_headway_id.columns if "Headway" in col and df_headway_id[col].dtype == "O"
+            ]
+
+            # Log the selected columns for conflict calculation
+            logging.info(f"Selected headway columns for conflict calculation: {headway_columns}")
+
+            # Define a helper function to calculate conflict counts for each threshold
+            def count_conflicts(row, thresholds):
+                """
+                Counts the number of headway values below each threshold for each phase.
+
+                Parameters:
+                -----------
+                row : pd.Series
+                    Row of DataFrame containing headway data as lists.
+                thresholds : list
+                    List of thresholds to define conflicts.
+
+                Returns:
+                --------
+                pd.Series
+                    Series containing conflict counts for each threshold.
+                """
+                conflict_counts = {}
+                for column, values in row.items():
+                    for threshold in thresholds:
+                        count = sum((v < threshold and v > 0) for v in values)
+                        conflict_column_name = column.replace("Headway", f"Conflict{threshold}")
+                        conflict_counts[conflict_column_name] = count
+                return pd.Series(conflict_counts)
+
+            # Apply the conflict calculation function row-wise
+            df_conflict_id = df_headway_id[headway_columns].apply(
+                count_conflicts, axis=1, thresholds=thresholds
+            )
+
+            # Combine conflict counts with metadata columns
+            df_conflict_id = pd.concat(
+                [df_headway_id[["signalID", "cycleNo", "cycleBegin", "cycleEnd", "cycleLength", "date"]], df_conflict_id],
+                axis=1
+            )
+
+            # Cycle-Level
+            # Define the path to save conflict data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="conflict",
+                signal_id=signal_id
+            )
+
+            # Save the conflict data as a pickle file
+            export_data(
+                df=df_conflict_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Hourly
+            df_conflict_id_hourly = self.calculate_hourly_aggregates(df=df_conflict_id, only_sum=True)
+
+            # Define the path to save conflict data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="conflict",
+                signal_id=signal_id
+            )
+
+            # Save the conflict data as a pickle file
+            export_data(
+                df=df_conflict_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Return the resulting DataFrame
+            return df_conflict_id
+
+        except Exception as e:
+            # Log errors and raise a custom exception for debugging
+            logging.error(f"Error extracting conflict data for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting conflict data for signal ID: {signal_id}", 
+                                sys_module=sys)
+
     def extract_red_running(self, signal_id: str, with_countbar: bool = False):
         """
         Extracts red light running data for a given signal ID at a cycle level.
@@ -2104,7 +2234,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Log success and return the data
             logging.info(f"Red running data successfully extracted and saved for signal ID: {signal_id}")
-            return df_red_running_id, df_red_running_id_hourly
+            return df_red_running_id
 
         except Exception as e:
             logging.error(f"Error extracting red running for signal ID: {signal_id}: {e}")
@@ -2273,7 +2403,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Log success and return the data
             logging.info(f"Dilemma running data successfully extracted and saved for signal ID: {signal_id}")
-            return df_dilemma_running_id, df_dilemma_running_id_hourly
+            return df_dilemma_running_id
 
         except Exception as e:
             logging.error(f"Error extracting dilemma running for signal ID: {signal_id}: {e}")
@@ -2432,7 +2562,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Log successful extraction
             logging.info(f"Pedestrian volume data successfully extracted and saved for signal ID: {signal_id}")
-            return df_pedestrian_volume_id, df_pedestrian_volume_id_hourly
+            return df_pedestrian_volume_id
 
         except Exception as e:
             logging.error(f"Error extracting pedestrian volume for signal ID: {signal_id}: {e}")
@@ -2637,7 +2767,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
             # Log successful extraction
             logging.info(f"Pedestrian delay data successfully extracted and saved for signal ID: {signal_id}")
-            return df_pedestrian_delay_id, df_pedestrian_delay_id_hourly
+            return df_pedestrian_delay_id
 
         except Exception as e:
             logging.error(f"Error extracting pedestrian delay for signal ID: {signal_id}: {e}")
