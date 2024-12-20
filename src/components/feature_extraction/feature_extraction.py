@@ -200,6 +200,84 @@ class CoreEventUtils:
         
         except Exception as e:
             raise CustomException(custom_message=f"Error filtering by day: {e}", sys_module=sys)
+        
+    def calculate_hourly_aggregates(self, df: pd.DataFrame, only_sum: bool = False):
+        """
+        Calculate hourly aggregates for the given DataFrame. The function can either calculate
+        only the sum or multiple statistics (min, max, mean, std) for float columns.
+
+        Parameters:
+        -----------
+        df : pd.DataFrame
+            The input DataFrame containing data to be aggregated.
+        only_sum : bool, optional
+            If True, calculates only the sum for each column. Otherwise, calculates
+            min, max, mean, and standard deviation. Default is False.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing hourly aggregated data.
+
+        Raises:
+        -------
+        CustomException
+            If an error occurs during the aggregation process.
+        """
+        try:
+            logging.info("Starting hourly aggregation process.")
+
+            # Convert "cycleBegin" to datetime and extract the hour
+            df["cycleBegin"] = pd.to_datetime(df["cycleBegin"])
+            df["hour"] = df["cycleBegin"].dt.hour
+
+            # Drop unnecessary columns
+            df = df.drop(columns=["cycleNo", "cycleBegin", "cycleEnd"])
+
+            # Select columns for aggregation (only float columns)
+            columns = [
+                col for col in df.columns 
+                if col not in ["signalID", "date", "hour"] and df[col].dtype == "float"
+            ]
+
+            if only_sum:
+                # Calculate only the sum if `only_sum` is True
+                df_hourly = df.groupby(["signalID", "date", "hour"])[columns].sum().reset_index()
+
+                # Rename columns to append 'Sum' at the end
+                df_hourly.columns = [
+                    col + "Sum" if col not in ["signalID", "date", "hour"] else col 
+                    for col in df_hourly.columns
+                ]
+
+                return df_hourly
+            else:
+                # Replace 0 values with NaN to avoid bias in statistical calculations
+                df[columns] = df[columns].replace(0, np.nan)
+
+                # Define aggregation functions
+                agg_funcs = {col: ["min", "max", "mean", "std"] for col in columns}
+
+                # Group by signalID, date, and hour, and apply multiple aggregations
+                df_hourly = df.groupby(["signalID", "date", "hour"]).agg(agg_funcs).round(4)
+
+                # Flatten multi-level column names and rename with appropriate suffixes
+                df_hourly.columns = [
+                    f"{col}{'Avg' if func == 'mean' else func.capitalize()}" 
+                    for col, func in df_hourly.columns
+                ]
+
+                # Reset index for the final output
+                df_hourly = df_hourly.reset_index()
+
+                return df_hourly
+
+        except Exception as e:
+            logging.error(f"Error occurred during hourly aggregation: {e}")
+            raise CustomException(
+                custom_message="Failed to calculate hourly aggregates.",
+                sys_module=sys
+            )
 
 
 class TrafficSignalProfile(CoreEventUtils):
@@ -731,14 +809,14 @@ class SignalFeatureExtract(CoreEventUtils):
             DataFrame containing phase-specific green, yellow, red clearance, and red ratios for each cycle.
         """
         try:
-            # Step 1: Define the path to the directory where vehicle cycle profile data is stored
+            # Define the path to the directory where vehicle cycle profile data is stored
             _, _, production_signal_dirpath, _ = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_signal",
                 signal_id=signal_id
             )
 
-            # Step 2: Load vehicle cycle profile data
+            # Load vehicle cycle profile data
             df_vehicle_cycle_profile_id = load_data(
                 base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
                 sub_dirpath=production_signal_dirpath,
@@ -746,10 +824,10 @@ class SignalFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
-            # Step 3: Initialize variables
+            # Initialize variables
             df_spat_id = pd.DataFrame()  # DataFrame to store SPaT data
 
-            # Step 4: Iterate over each cycle in the vehicle cycle profile
+            # Iterate over each cycle in the vehicle cycle profile
             for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
                 # Extract cycle-specific information
                 signal_id = df_vehicle_cycle_profile_id.signalID[i]
@@ -770,16 +848,16 @@ class SignalFeatureExtract(CoreEventUtils):
                 # Extract unique phase numbers from the DataFrame columns
                 phase_nos = [int(column[-1]) for column in df_vehicle_cycle_profile_id.columns if "Phase" in column]
 
-                # Add placeholders for each signal type ratio for each phase
+                # Add placeholders for each signal type duration for each phase
                 for phase_no in phase_nos:
                     dict_spat_id.update({
-                        f"greenRatioPhase{phase_no}": 0,
-                        f"yellowRatioPhase{phase_no}": 0,
-                        f"redClearanceRatioPhase{phase_no}": 0,
-                        f"redRatioPhase{phase_no}": 0
+                        f"greenDurationPhase{phase_no}": 0,
+                        f"yellowDurationPhase{phase_no}": 0,
+                        f"redClearanceDurationPhase{phase_no}": 0,
+                        f"redDurationPhase{phase_no}": 0
                     })
 
-                # Step 5: Calculate signal ratios for each phase
+                # Calculate signal durations for each phase
                 dict_signal_types = {
                     signal_type: [] for signal_type in ["green", "yellow", "redClearance", "red"]
                 }  # Temporary storage for signal times
@@ -790,10 +868,10 @@ class SignalFeatureExtract(CoreEventUtils):
                     if not isinstance(dict_signal_types["red"], list):  # Ensure red times are in list format
                         dict_signal_types["red"] = [dict_signal_types["red"]]
 
-                    # If red times are missing, set default ratios
+                    # If red times are missing, set default durations
                     if any(pd.isna(time) for time in dict_signal_types["red"]):
                         for signal_type in ["green", "yellow", "redClearance", "red"]:
-                            dict_spat_id[f"{signal_type}RatioPhase{phase_no}"] = 1 if signal_type == "red" else 0
+                            dict_spat_id[f"{signal_type}DurationPhase{phase_no}"] = cycle_length if signal_type == "red" else 0
                         continue
 
                     # Extract green, yellow, and red clearance times
@@ -802,21 +880,22 @@ class SignalFeatureExtract(CoreEventUtils):
                         if not isinstance(dict_signal_types[signal_type], list):  # Ensure times are in list format
                             dict_signal_types[signal_type] = [dict_signal_types[signal_type]]
 
-                    # Calculate and store signal ratios
+                    # Calculate and store signal durations
                     for signal_type in ["green", "yellow", "redClearance", "red"]:
                         time_diff = 0  # Initialize variable to sum time differences
                         for start_time, end_time in dict_signal_types[signal_type]:
                             time_diff += (end_time - start_time).total_seconds()  # Calculate duration in seconds
-                        # Calculate and store the ratio
-                        dict_spat_id[f"{signal_type}RatioPhase{phase_no}"] = round(time_diff / cycle_length, 4)
+                        # Calculate and store the duration
+                        dict_spat_id[f"{signal_type}DurationPhase{phase_no}"] = round(time_diff, 4)
 
-                # Step 6: Append the cycle's SPaT data to the DataFrame
+                # Append the cycle's SPaT data to the DataFrame
                 df_spat_id = pd.concat([df_spat_id, pd.DataFrame([dict_spat_id])], axis=0, ignore_index=True)
 
-            # Step 7: Add date information to the DataFrame
+            # Add date information to the DataFrame
             df_spat_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Step 8: Define the output directory for SPaT data
+            # Cycle-Level
+            # Define the output directory for SPaT data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_signal",
@@ -824,7 +903,7 @@ class SignalFeatureExtract(CoreEventUtils):
                 signal_id=signal_id
             )
 
-            # Step 9: Save the SPaT data as a pickle file
+            # Save the SPaT data as a pickle file
             export_data(
                 df=df_spat_id,
                 base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
@@ -833,9 +912,29 @@ class SignalFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
+            # Hourly
+            df_spat_id_hourly = self.calculate_hourly_aggregates(df=df_spat_id)
+
+            # Define the output directory for SPaT data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_signal",
+                feature_name="spat",
+                signal_id=signal_id
+            )
+
+            # Save the SPaT hourly data as a pickle file
+            export_data(
+                df=df_spat_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
             # Log success and return the data
             logging.info(f"SPaT data successfully extracted and saved for signal ID: {signal_id}")
-            return df_spat_id
+            return df_spat_id, df_spat_id_hourly
 
         except Exception as e:
             # Handle and log any errors
@@ -1232,6 +1331,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Add date information to the DataFrame
             df_volume_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
+            # Cycle-Level
             # Define the directory path to save the volume data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
@@ -1246,10 +1346,28 @@ class TrafficFeatureExtract(CoreEventUtils):
                         sub_dirpath=production_feature_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
                         file_type="pkl")
+            
+            # Hourly
+            df_volume_id_hourly = self.calculate_hourly_aggregates(df=df_volume_id, only_sum=True)
+
+            # Define the directory path to save the volume data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="volume",
+                signal_id=signal_id
+            )
+
+            # Save the volume data as a .pkl file
+            export_data(df=df_volume_id_hourly,
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                        sub_dirpath=production_feature_dirpath,
+                        filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                        file_type="pkl")
 
             # Log successful extraction
             logging.info(f"Volume data successfully extracted and saved for signal ID: {signal_id}")
-            return df_volume_id
+            return df_volume_id, df_volume_id_hourly
 
         except Exception as e:
             logging.error(f"Error extracting volume for signal ID: {signal_id}: {e}")
@@ -1271,13 +1389,13 @@ class TrafficFeatureExtract(CoreEventUtils):
             DataFrame containing occupancy data for each cycle and phase.
         """
         try:
-            # Step 1: Load required data
+            # Load required data
             df_event_id, df_config_id, df_vehicle_cycle_profile_id, _ = self._load_data(signal_id=signal_id)
 
-            # Step 2: Filter event data for the event sequence [82, 81] (detector on/off events)
+            # Filter event data for the event sequence [82, 81] (detector on/off events)
             df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[82, 81])
 
-            # Step 3: Clean and filter configuration data
+            # Clean and filter configuration data
             # Remove rows with missing phase numbers
             df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
             df_config_id = float_to_int(df_config_id)
@@ -1285,7 +1403,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Filter configuration data for the stop bar (front detector)
             df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="front")
 
-            # Step 4: Join event data with configuration data on channel number
+            # Join event data with configuration data on channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
                                    how="inner", 
                                    left_on=["eventParam"], right_on=["channelNo"])
@@ -1293,10 +1411,10 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Ensure consistent data types
             df_event_id = float_to_int(df_event_id)
 
-            # Step 5: Initialize an empty DataFrame to store occupancy data
+            # Initialize an empty DataFrame to store occupancy data
             df_occupancy_id = pd.DataFrame()
 
-            # Step 6: Process each cycle in the vehicle cycle profile
+            # Process each cycle in the vehicle cycle profile
             for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
                 # Extract signal and cycle information
                 signal_id = df_vehicle_cycle_profile_id["signalID"][i]
@@ -1343,7 +1461,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     (df_event_id["timeStamp"] <= et)
                 ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
 
-                # Step 7: Process each phase and signal type
+                # Process each phase and signal type
                 for phase_no in phase_nos:
                     # Filter event data for the current phase
                     df_event_phase = df_event_tolerance[df_event_tolerance["phaseNo"] == phase_no].reset_index(drop=True)
@@ -1405,20 +1523,22 @@ class TrafficFeatureExtract(CoreEventUtils):
                 # Append the cycle's occupancy data to the DataFrame
                 df_occupancy_id = pd.concat([df_occupancy_id, pd.DataFrame([dict_occupancy_id])], axis=0, ignore_index=True)
 
-            # Step 8: Add date information
+            # Add date information
             df_occupancy_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
-            # Step 9: Calculate statistics for occupancy data
+            # Calculate statistics for occupancy data
             columns = [col for col in df_occupancy_id.columns if "Occupancy" in col]
             df_occupancy_id = self._calculate_stats(df=df_occupancy_id, column_names=columns, include_sum_list=True)
 
-            # Step 10: Save the extracted occupancy data
+            # Cycle-Level
+            # Save the extracted occupancy data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_traffic",
                 feature_name="occupancy",
                 signal_id=signal_id
             )
+
             export_data(
                 df=df_occupancy_id,
                 base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
@@ -1427,9 +1547,28 @@ class TrafficFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
+            # Hourly
+            df_occupancy_id_hourly = self.calculate_hourly_aggregates(df=df_occupancy_id)
+
+            # Save the extracted occupancy data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="occupancy",
+                signal_id=signal_id
+            )
+
+            export_data(
+                df=df_occupancy_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
             # Log success and return the data
             logging.info(f"Occupancy data successfully extracted and saved for signal ID: {signal_id}")
-            return df_occupancy_id
+            return df_occupancy_id, df_occupancy_id_hourly
 
         except Exception as e:
             logging.error(f"Error extracting occupancy for signal ID: {signal_id}: {e}")
@@ -1451,7 +1590,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             DataFrame containing split failure flags for each phase and cycle.
         """
         try:
-            # Step 1: Load SPaT data
+            # Load SPaT data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_signal",
@@ -1465,7 +1604,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
-            # Step 2: Load occupancy data
+            # Load occupancy data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_traffic",
@@ -1479,7 +1618,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
-            # Step 3: Extract green ratio columns from SPaT data
+            # Extract green ratio columns from SPaT data
             spat_columns = [col for col in df_spat_id.columns if "greenRatioPhase" in col]
 
             # Keep only relevant columns in SPaT data
@@ -1489,13 +1628,13 @@ class TrafficFeatureExtract(CoreEventUtils):
             for column in spat_columns:
                 df_spat_id[column] = df_spat_id[column] * df_spat_id["cycleLength"]
 
-            # Step 4: Extract green occupancy columns from occupancy data
+            # Extract green occupancy columns from occupancy data
             occupancy_columns = [col for col in df_occupancy_id.columns if "greenSumListOccupancyPhase" in col]
 
             # Keep only relevant columns in occupancy data
             df_occupancy_id = df_occupancy_id[["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"] + occupancy_columns]
 
-            # Step 5: Merge SPaT and occupancy data on common keys
+            # Merge SPaT and occupancy data on common keys
             df_split_failure_id = pd.merge(
                 df_spat_id,
                 df_occupancy_id,
@@ -1524,7 +1663,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     raise ValueError(f"Phase mismatch: {spat_column} and {occupancy_column}")
                 phase_no = spat_column[-1]
 
-                # Step 7: Calculate split failure for the green phase
+                # Calculate split failure for the green phase
                 # Compute split failure flags: occupancy values exceeding green time
                 df_split_failure_id[f"greenSplitFailurePhase{phase_no}"] = df_split_failure_id.apply(
                     lambda row: [
@@ -1541,7 +1680,8 @@ class TrafficFeatureExtract(CoreEventUtils):
                 # Drop the intermediate columns for this phase
                 df_split_failure_id = df_split_failure_id.drop(columns=[spat_column, occupancy_column])
 
-            # Step 8: Define the path to save split failure data
+            # Cycle-Level
+            # Define the path to save split failure data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_traffic",
@@ -1549,7 +1689,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 signal_id=signal_id
             )
 
-            # Step 9: Save the split failure data as a pickle file
+            # Save the split failure data as a pickle file
             export_data(
                 df=df_split_failure_id,
                 base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
@@ -1558,8 +1698,28 @@ class TrafficFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
+            # Hourly
+            df_split_failure_id_hourly = self.calculate_hourly_aggregates(df=df_split_failure_id, only_sum=True)
+
+            # Define the path to save split failure data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="split_failure",
+                signal_id=signal_id
+            )
+
+            # Save the split failure data as a pickle file
+            export_data(
+                df=df_split_failure_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
             # Return the resulting DataFrame
-            return df_split_failure_id
+            return df_split_failure_id, df_split_failure_id_hourly
 
         except Exception as e:
             # Log errors and raise a custom exception for debugging
@@ -1582,13 +1742,13 @@ class TrafficFeatureExtract(CoreEventUtils):
             DataFrame containing headway data for each cycle and phase.
         """
         try:
-            # Step 1: Load required data
+            # Load required data
             df_event_id, df_config_id, df_vehicle_cycle_profile_id, _ = self._load_data(signal_id=signal_id)
 
-            # Step 2: Filter event data for the event code [82] (detector on events)
+            # Filter event data for the event code [82] (detector on events)
             df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[82])
 
-            # Step 3: Clean and filter configuration data
+            # Clean and filter configuration data
             # Remove rows with missing phase numbers
             df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
             df_config_id = float_to_int(df_config_id)
@@ -1596,7 +1756,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Filter configuration data for the back detector
             df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="back")
 
-            # Step 4: Join configuration data with event data on channel number
+            # Join configuration data with event data on channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
                                    how="inner", 
                                    left_on=["eventParam"], right_on=["channelNo"])
@@ -1604,10 +1764,10 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Ensure consistent data types
             df_event_id = float_to_int(df_event_id)
 
-            # Step 5: Initialize an empty DataFrame to store headway data
+            # Initialize an empty DataFrame to store headway data
             df_headway_id = pd.DataFrame()
 
-            # Step 6: Process each cycle in the vehicle cycle profile
+            # Process each cycle in the vehicle cycle profile
             for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
                 # Extract signal and cycle information
                 signal_id = df_vehicle_cycle_profile_id["signalID"][i]
@@ -1643,7 +1803,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     (df_event_id["timeStamp"] <= cycle_end)
                 ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
 
-                # Step 7: Process each phase and signal type
+                # Process each phase and signal type
                 for phase_no in phase_nos:
                     # Filter event data for the current phase
                     df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
@@ -1698,14 +1858,15 @@ class TrafficFeatureExtract(CoreEventUtils):
                 # Append the cycle's headway data to the DataFrame
                 df_headway_id = pd.concat([df_headway_id, pd.DataFrame([dict_headway_id])], axis=0, ignore_index=True)
 
-            # Step 8: Add date information
+            # Add date information
             df_headway_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
-            # Step 9: Calculate statistics for headway data
+            # Calculate statistics for headway data
             columns = [col for col in df_headway_id.columns if "Headway" in col]
             df_headway_id = self._calculate_stats(df=df_headway_id, column_names=columns)
 
-            # Step 10: Save the extracted headway data
+            # Cycle-Level
+            # Save the extracted headway data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_traffic",
@@ -1720,9 +1881,27 @@ class TrafficFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
+            # Hourly
+            df_headway_id_hourly = self.calculate_hourly_aggregates(df=df_headway_id)
+
+            # Save the extracted headway data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="headway",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_headway_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
             # Log success and return the data
             logging.info(f"Headway data successfully extracted and saved for signal ID: {signal_id}")
-            return df_headway_id
+            return df_headway_id, df_headway_id_hourly
 
         except Exception as e:
             logging.error(f"Error extracting headway for signal ID: {signal_id}: {e}")
@@ -1747,10 +1926,10 @@ class TrafficFeatureExtract(CoreEventUtils):
             DataFrame containing red light running data for each cycle and phase.
         """
         try:
-            # Step 1: Load required data
+            # Load required data
             df_event_id, df_config_id, df_vehicle_cycle_profile_id, _ = self._load_data(signal_id=signal_id)
 
-            # Step 2: Filter event data for the event sequence 
+            # Filter event data for the event sequence 
             if with_countbar:
                 # Event sequence [82, 81] (detector on/off events)
                 df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[82, 81])
@@ -1758,7 +1937,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 # Event code sequence [81] (detector off events)
                 df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81])
 
-            # Step 3: Clean and filter configuration data
+            # Clean and filter configuration data
             # Remove rows with missing phase numbers
             df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
             df_config_id = float_to_int(df_config_id)
@@ -1769,7 +1948,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             else:
                 df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="front")
 
-            # Step 4: Join configuration data with event data on channel number
+            # Join configuration data with event data on channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
                                     how="inner", 
                                     left_on=["eventParam"], right_on=["channelNo"])
@@ -1777,10 +1956,10 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Ensure consistent data types
             df_event_id = float_to_int(df_event_id)
 
-            # Step 5: Initialize an empty DataFrame to store red light running data
+            # Initialize an empty DataFrame to store red light running data
             df_red_running_id = pd.DataFrame()
 
-            # Step 6: Process each cycle in the vehicle cycle profile
+            # Process each cycle in the vehicle cycle profile
             for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
                 # Extract signal and cycle information
                 signal_id = df_vehicle_cycle_profile_id["signalID"][i]
@@ -1814,7 +1993,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     (df_event_id["timeStamp"] <= cycle_end)
                 ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
 
-                # Step 7: Process each phase and signal type
+                # Process each phase and signal type
                 for phase_no in phase_nos:
                     # Filter event data for the current phase
                     df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
@@ -1886,10 +2065,11 @@ class TrafficFeatureExtract(CoreEventUtils):
                 df_red_running_id = pd.concat([df_red_running_id, pd.DataFrame([dict_red_running_id])],
                                             axis=0, ignore_index=True)
 
-            # Step 8: Add date information
+            # Add date information
             df_red_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
-            # Step 9: Save the extracted red light running data
+            # Cycle-Level
+            # Save the extracted red light running data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_traffic",
@@ -1904,9 +2084,27 @@ class TrafficFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
+            # Hourly
+            df_red_running_id_hourly = self.calculate_hourly_aggregates(df=df_red_running_id, only_sum=True)
+
+            # Save the extracted red light running data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="red_running",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_red_running_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
             # Log success and return the data
             logging.info(f"Red running data successfully extracted and saved for signal ID: {signal_id}")
-            return df_red_running_id
+            return df_red_running_id, df_red_running_id_hourly
 
         except Exception as e:
             logging.error(f"Error extracting red running for signal ID: {signal_id}: {e}")
@@ -1931,13 +2129,13 @@ class TrafficFeatureExtract(CoreEventUtils):
             DataFrame containing dilemma zone running data for each cycle and phase.
         """
         try:
-            # Step 1: Load necessary data
+            # Load necessary data
             df_event_id, df_config_id, df_vehicle_cycle_profile_id, _ = self._load_data(signal_id=signal_id)
 
-            # Step 2: Filter event data for the event code sequence [81] (detector off events)
+            # Filter event data for the event code sequence [81] (detector off events)
             df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81])
 
-            # Step 3: Clean and filter configuration data
+            # Clean and filter configuration data
             # Remove rows with missing phase numbers
             df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
             df_config_id = float_to_int(df_config_id)
@@ -1948,7 +2146,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             else:
                 df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="front")
 
-            # Step 4: Merge configuration data with event data based on the channel number
+            # Merge configuration data with event data based on the channel number
             df_event_id = pd.merge(df_event_id, df_config_id, 
                                    how="inner", 
                                    left_on=["eventParam"], right_on=["channelNo"])
@@ -1956,10 +2154,10 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Ensure consistent data types after merging
             df_event_id = float_to_int(df_event_id)
 
-            # Step 5: Initialize an empty DataFrame to store dilemma zone running data
+            # Initialize an empty DataFrame to store dilemma zone running data
             df_dilemma_running_id = pd.DataFrame()
 
-            # Step 6: Process each cycle in the vehicle cycle profile
+            # Process each cycle in the vehicle cycle profile
             for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
                 # Extract signal and cycle information
                 signal_id = df_vehicle_cycle_profile_id["signalID"][i]
@@ -1984,13 +2182,13 @@ class TrafficFeatureExtract(CoreEventUtils):
                 for phase_no in phase_nos:
                     dict_dilemma_running_id[f"yellowRunningFlagPhase{phase_no}"] = 0
 
-                # Step 7: Filter event data for the current cycle
+                # Filter event data for the current cycle
                 df_event_cycle = df_event_id[
                     (df_event_id["timeStamp"] >= cycle_begin) & 
                     (df_event_id["timeStamp"] <= cycle_end)
                 ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
 
-                # Step 8: Process each phase and signal type
+                # Process each phase and signal type
                 for phase_no in phase_nos:
                     # Filter event data for the current phase
                     df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
@@ -2012,7 +2210,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     # Initialize a flag to indicate dilemma zone running for the current phase
                     dilemma_running_flag = 0
 
-                    # Step 9: Check for dilemma zone running events
+                    # Check for dilemma zone running events
                     for channel_no in df_event_phase["channelNo"].unique():
                         # Filter event data for the current channel
                         df_event_channel = df_event_phase[df_event_phase["channelNo"] == channel_no]
@@ -2036,10 +2234,11 @@ class TrafficFeatureExtract(CoreEventUtils):
                 df_dilemma_running_id = pd.concat([df_dilemma_running_id, pd.DataFrame([dict_dilemma_running_id])],
                                                 axis=0, ignore_index=True)
 
-            # Step 10: Add date information to the DataFrame
+            # Add date information to the DataFrame
             df_dilemma_running_id["date"] = pd.Timestamp(f"{self.year}-{self.month}-{self.day}").date()
 
-            # Step 11: Save the extracted dilemma zone running data
+            # Cycle-Level
+            # Save the extracted dilemma zone running data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="vehicle_traffic",
@@ -2054,9 +2253,27 @@ class TrafficFeatureExtract(CoreEventUtils):
                 file_type="pkl"
             )
 
+            # Hourly
+            df_dilemma_running_id_hourly = self.calculate_hourly_aggregates(df=df_dilemma_running_id, only_sum=True)
+
+            # Save the extracted dilemma zone running data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="dilemma_running",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_dilemma_running_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
             # Log success and return the data
             logging.info(f"Dilemma running data successfully extracted and saved for signal ID: {signal_id}")
-            return df_dilemma_running_id
+            return df_dilemma_running_id, df_dilemma_running_id_hourly
 
         except Exception as e:
             logging.error(f"Error extracting dilemma running for signal ID: {signal_id}: {e}")
@@ -2178,6 +2395,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Add date information to the DataFrame
             df_pedestrian_volume_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
+            # Cycle-Level
             # Define the directory path to save the pedestrian volume data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
@@ -2192,10 +2410,29 @@ class TrafficFeatureExtract(CoreEventUtils):
                         sub_dirpath=production_feature_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
                         file_type="pkl")
+            
+            # Hourly
+            df_pedestrian_volume_id_hourly = self.calculate_hourly_aggregates(df=df_pedestrian_volume_id, 
+                                                                              only_sum=True)
+
+            # Define the directory path to save the pedestrian volume data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="pedestrian_traffic",
+                feature_name="volume",
+                signal_id=signal_id
+            )
+
+            # Save the pedestrian volume data as a .pkl file
+            export_data(df=df_pedestrian_volume_id_hourly,
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                        sub_dirpath=production_feature_dirpath,
+                        filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                        file_type="pkl")
 
             # Log successful extraction
             logging.info(f"Pedestrian volume data successfully extracted and saved for signal ID: {signal_id}")
-            return df_pedestrian_volume_id
+            return df_pedestrian_volume_id, df_pedestrian_volume_id_hourly
 
         except Exception as e:
             logging.error(f"Error extracting pedestrian volume for signal ID: {signal_id}: {e}")
@@ -2364,6 +2601,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Add date information to the DataFrame
             df_pedestrian_delay_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
+            # Cycle-Level
             # Define the directory path to save the pedestrian delay data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
@@ -2378,10 +2616,28 @@ class TrafficFeatureExtract(CoreEventUtils):
                         sub_dirpath=production_feature_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
                         file_type="pkl")
+            
+            # Hourly
+            df_pedestrian_delay_id_hourly = self.calculate_hourly_aggregates(df=df_pedestrian_delay_id)
+
+            # Define the directory path to save the pedestrian delay data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="pedestrian_traffic",
+                feature_name="delay",
+                signal_id=signal_id
+            )
+
+            # Save the pedestrian delay data as a .pkl file
+            export_data(df=df_pedestrian_delay_id_hourly,
+                        base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                        sub_dirpath=production_feature_dirpath,
+                        filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                        file_type="pkl")
 
             # Log successful extraction
             logging.info(f"Pedestrian delay data successfully extracted and saved for signal ID: {signal_id}")
-            return df_pedestrian_delay_id
+            return df_pedestrian_delay_id, df_pedestrian_delay_id_hourly
 
         except Exception as e:
             logging.error(f"Error extracting pedestrian delay for signal ID: {signal_id}: {e}")
