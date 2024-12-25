@@ -52,6 +52,9 @@ class DataSort:
             # Parse and sort timestamps
             df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]], 
                                                                     format="%m-%d-%Y %H:%M:%S.%f")
+            
+            # Adjustment for eastern time zone
+            df_event_id[dict_column_names["time"]] = df_event_id[dict_column_names["time"]] + pd.Timedelta(hours=4)
             df_event_id = df_event_id.sort_values(by=dict_column_names["time"]).reset_index(drop=True)
             
             # Path (from database directory) to directory where sorted event data will be exported
