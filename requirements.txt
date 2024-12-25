@@ -1,4 +1,6 @@
 numpy
+scipy
+statsmodels
 pandas
 tqdm
 requests
@@ -11,5 +13,7 @@ pyyaml
 bs4
 psutil
 rich
+matplotlib
+seaborn
 
 # -e .
