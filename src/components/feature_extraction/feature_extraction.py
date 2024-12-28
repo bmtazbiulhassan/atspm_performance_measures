@@ -63,6 +63,8 @@ class CoreEventUtils:
             "time": get_column_name_by_partial_name(df=df_event, partial_name="time")
             }
         
+        df_event[dict_column_names["code"]] = df_event[dict_column_names["code"]].astype(int)
+        
         # Filter rows based on the specified event sequence
         df_event_sequence = df_event[df_event[dict_column_names["code"]].isin(event_sequence)]
         
@@ -1301,7 +1303,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                 # Initialize phase-specific volume keys in the dictionary
                 for phase_no in phase_nos:
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
 
                     for lane_type in lane_types:
                         dict_volume_id.update({
@@ -1327,11 +1329,11 @@ class TrafficFeatureExtract(CoreEventUtils):
                     phase_volume = len(df_event_phase)
                     dict_volume_id[f"volumePhase{phase_no}"] = phase_volume
 
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
 
                     for lane_type in lane_types:
                         channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
-                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].values.tolist()
+                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
 
                         # Define signal types
                         signal_types = ["green", "yellow", "redClearance", "red"]
@@ -1498,11 +1500,11 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                 # Add placeholders for phase-specific occupancy data
                 for phase_no in phase_nos:
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
                     
                     for lane_type in lane_types:
                         channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
-                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].values.tolist()
+                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
 
                         dict_occupancy_id.update({
                             f"greenOccupancyPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
@@ -1533,7 +1535,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     # Filter event data for the current phase
                     df_event_phase = df_event_tolerance[df_event_tolerance["phaseNo"] == phase_no].reset_index(drop=True)
 
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
 
                     # Define signal types to process
                     signal_types = ["green", "yellow", "redClearance", "red"]
@@ -1551,9 +1553,15 @@ class TrafficFeatureExtract(CoreEventUtils):
                             continue
                         
                         for lane_type in lane_types:
-                            channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
-                                                        (df_config_id["laneType"] == lane_type))]["channelNo"].values.tolist()
+                            df_config_lane_type = (
+                                df_config_id
+                                [(df_config_id["phaseNo"] == phase_no) & (df_config_id["laneType"] == lane_type)]
+                                .reset_index(drop=True)
+                            )
 
+                            channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
+                                                        (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
+                    
                             for channel_no in channel_nos:
                                 df_event_channel = (
                                     df_event_phase[df_event_phase["channelNo"] == channel_no].reset_index(drop=True)
@@ -1597,6 +1605,85 @@ class TrafficFeatureExtract(CoreEventUtils):
                                 
                                 # Store occupancy data for the current channel
                                 dict_occupancy_id[f"{signal_type}OccupancyPhase{phase_no}{lane_type}"][idx] = occupancies
+
+                            lane_nos = df_config_lane_type["laneNoFromLeft"].unique().tolist()
+                            
+                            indices_to_flatten = []
+                            for lane_no in lane_nos:
+                                channel_nos_lane = (
+                                    df_config_lane_type
+                                    [df_config_lane_type["laneNoFromLeft"] == lane_no]
+                                    ["channelNo"]
+                                    .values
+                                    .tolist()
+                                )
+                                
+                                if len(channel_nos_lane) > 1:
+                                    indices = [
+                                        channel_nos.index(channel_no_lane) for channel_no_lane in channel_nos_lane
+                                    ]
+                                    indices_to_flatten.append(indices)
+
+                            def flatten_dict_value_by_grouped_indices(dict_data, key, grouped_indices):
+                                """
+                                Flattens specific groups of indices in the list of lists for a given key in a dictionary.
+
+                                Parameters:
+                                -----------
+                                dict_data : dict
+                                    The original dictionary.
+                                key : str
+                                    The key whose value needs flattening.
+                                grouped_indices : list of list of int
+                                    Groups of indices specifying which inner lists to flatten together.
+
+                                Returns:
+                                --------
+                                list
+                                    The modified list for the specified key, with the specified groups of indices flattened.
+                                """
+                                # Ensure the key exists in the dictionary
+                                if key not in dict_data:
+                                    raise KeyError(f"Key '{key}' not found in the dictionary.")
+                                
+                                # Extract the value for the key
+                                value = dict_data[key]
+
+                                # Keep track of indices to skip once processed
+                                flattened_result = []
+                                processed_indices = set()
+
+                                for group in grouped_indices:
+                                    # Validate indices within the group
+                                    valid_indices = [i for i in group if 0 <= i < len(value)]
+                                    
+                                    # Flatten the group
+                                    flattened = []
+                                    for i in valid_indices:
+                                        if i not in processed_indices:  # Ensure no duplicate processing
+                                            flattened += value[i]
+                                            processed_indices.add(i)
+                                    
+                                    # Add the flattened group to the result
+                                    if valid_indices:
+                                        flattened_result.append(flattened)
+
+                                # Add unprocessed indices back to the result
+                                for i in range(len(value)):
+                                    if i not in processed_indices:
+                                        flattened_result.append(value[i])
+
+                                # Update the dictionary with the modified value
+                                dict_data[key] = flattened_result
+
+                                return dict_data[key]
+                            
+                            if indices_to_flatten:
+                                dict_occupancy_id[f"{signal_type}OccupancyPhase{phase_no}{lane_type}"] = (
+                                    flatten_dict_value_by_grouped_indices(dict_data=dict_occupancy_id, 
+                                                                            key=f"{signal_type}OccupancyPhase{phase_no}{lane_type}", 
+                                                                            grouped_indices=indices_to_flatten)
+                                )
 
                 # Append the cycle's occupancy data to the DataFrame
                 df_occupancy_id = pd.concat([df_occupancy_id, pd.DataFrame([dict_occupancy_id])], axis=0, ignore_index=True)
@@ -1876,11 +1963,11 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                 # Add placeholders for phase-specific headway data
                 for phase_no in phase_nos:
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
                     
                     for lane_type in lane_types:
                         channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
-                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].values.tolist()
+                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
                         dict_headway_id.update({
                             f"greenHeadwayPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
                             f"yellowHeadwayPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
@@ -1899,7 +1986,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     # Filter event data for the current phase
                     df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
 
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
 
                     # Define signal types to process
                     signal_types = ["green", "yellow", "redClearance", "red"]
@@ -1918,7 +2005,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                         for lane_type in lane_types:
                             channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
-                                                        (df_config_id["laneType"] == lane_type))]["channelNo"].values.tolist()
+                                                        (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
 
                             for channel_no in channel_nos:
                                 df_event_channel = (
@@ -2223,7 +2310,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                 # Add placeholders for red light running flags for each phase
                 for phase_no in phase_nos:
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
                     
                     for lane_type in lane_types:
                         dict_red_running_id.update({
@@ -2242,7 +2329,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     # Filter event data for the current phase
                     df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
 
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
 
                     # Define signal types to process
                     signal_types = ["redClearance", "red"]
@@ -2261,7 +2348,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                         
                         for lane_type in lane_types:
                             channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
-                                                        (df_config_id["laneType"] == lane_type))]["channelNo"].values.tolist()
+                                                        (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
 
                             # Initialize a flag to indicate red light running for the current signal type
                             red_running_flag = 0
@@ -2442,7 +2529,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                 # Add placeholders for dilemma zone running flags for each phase
                 for phase_no in phase_nos:
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
                     
                     for lane_type in lane_types:
                         dict_dilemma_running_id[f"yellowRunningFlagPhase{phase_no}{lane_type}"] = 0
@@ -2458,7 +2545,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                     # Filter event data for the current phase
                     df_event_phase = df_event_cycle[df_event_cycle["phaseNo"] == phase_no].reset_index(drop=True)
 
-                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].values.tolist()
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
 
                     # Define signal type to process (yellow phase)
                     signal_type = "yellow"
@@ -2476,7 +2563,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                     for lane_type in lane_types:
                         channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
-                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].values.tolist()
+                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
 
                         # Initialize a flag to indicate dilemma zone running for the current phase
                         dilemma_running_flag = 0
@@ -2560,9 +2647,9 @@ class TrafficFeatureExtract(CoreEventUtils):
             raise CustomException(custom_message=f"Error extracting dilemma running for signal ID: {signal_id}", 
                                 sys_module=sys)
     
-    def extract_pedestrian_volume(self, signal_id: str):
+    def extract_pedestrian_activity(self, signal_id: str):
         """
-        Extracts cycle-level pedestrian volume data for a given signal ID.
+        Extracts cycle-level pedestrian activity data for a given signal ID.
 
         Parameters:
         -----------
@@ -2572,31 +2659,31 @@ class TrafficFeatureExtract(CoreEventUtils):
         Returns:
         --------
         pd.DataFrame
-            DataFrame containing cycle-level pedestrian volume data for the specified signal ID.
+            DataFrame containing cycle-level pedestrian activity data for the specified signal ID.
 
         Raises:
         -------
         CustomException
-            If an error occurs during volume extraction.
+            If an error occurs during activity extraction.
         """
         try:
             # Load event, configuration, and vehicle cycle profile data
             df_event_id, _, df_vehicle_cycle_profile_id, df_pedestrian_cycle_profile_id = self._load_data(signal_id=signal_id)
 
+            event_codes = [45, 90]
+            df_event_id["eventCode"] = df_event_id["eventCode"].astype(int)
+
             # Filter event data for event sequence [45, 90] (i.e., pedestrian call registered and pedestrian detector off)
-            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[45, 90])
+            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=event_codes)
 
-            # Drop duplicates based on time, and event param
-            df_event_id = (
-                df_event_id.drop_duplicates(subset=["timeStamp", "eventParam"])
-                           .reset_index(drop=True)
-            )
+            # # Drop duplicates based on time, and event param
+            # df_event_id = (
+            #     df_event_id.drop_duplicates(subset=["timeStamp", "eventParam"])
+            #                .reset_index(drop=True)
+            # )
 
-            # Ensure consistent data types for merged data
-            df_event_id = float_to_int(df_event_id)
-
-            # Initialize an empty DataFrame to store the final pedestrian volume data
-            df_pedestrian_volume_id = pd.DataFrame()
+            # Initialize an empty DataFrame to store the final pedestrian activity data
+            df_pedestrian_activity_id = pd.DataFrame()
 
             if len(df_pedestrian_cycle_profile_id) != 0:
                 cycle_nos = sorted(df_pedestrian_cycle_profile_id["cycleNo"].unique())  # Get sorted unique cycle numbers
@@ -2622,15 +2709,20 @@ class TrafficFeatureExtract(CoreEventUtils):
                             df_vehicle_cycle_profile_id[df_vehicle_cycle_profile_id["cycleNo"] == (cycle_no - 1)]["cycleEnd"].values[0]
                         )
 
-                    if ((cycle_no - 1) not in cycle_nos) and ((cycle_no - 1) in cycle_nos_vehicle):
-                        cycle_begins = [cycle_begin, cycle_begin_prev]
-                        cycle_ends = [cycle_end, cycle_end_prev]
+                    if ((cycle_no - 1) not in cycle_nos): 
+                        if ((cycle_no - 1) in cycle_nos_vehicle):
+                            cycle_begins = [cycle_begin, cycle_begin_prev]
+                            cycle_ends = [cycle_end, cycle_end_prev]
+                        else:
+                            cycle_begins = [cycle_begin, cycle_begin - pd.Timedelta("1.5min")]
+                            cycle_ends = [cycle_end, cycle_begin]
                     else:
                         cycle_begins = [cycle_begin]
                         cycle_ends = [cycle_end]
+                        
 
-                    # Initialize a dictionary to store volume data for the current cycle
-                    dict_pedestrian_volume_id = {
+                    # Initialize a dictionary to store activity data for the current cycle
+                    dict_pedestrian_activity_id = {
                         "signalID": signal_id,
                         "cycleNo": cycle_no,
                         "cycleBegin": cycle_begin,
@@ -2640,15 +2732,16 @@ class TrafficFeatureExtract(CoreEventUtils):
                     # List all unique phase numbers
                     phase_nos = sorted(list(df_event_id["eventParam"].unique()))
 
-                    # Initialize phase-specific volume keys in the dictionary
+                    # Initialize phase-specific activity keys in the dictionary
                     for phase_no in phase_nos:
-                        dict_pedestrian_volume_id.update({
-                            f"pedestrianVolumePhase{phase_no}":0,
-                            f"pedestrianVolumePhase{phase_no}CurrCycle": 0,
-                            f"pedestrianVolumePhase{phase_no}PrevCycle": 0
-                        })
-                    
-                    cycles = ["Curr", "Prev"]
+                        for event_code in event_codes:
+                            dict_pedestrian_activity_id.update({
+                                f"pedestrianActivity{event_code}Phase{phase_no}":0,
+                                f"pedestrianActivity{event_code}Phase{phase_no}CurrCycle": 0,
+                                f"pedestrianActivity{event_code}Phase{phase_no}PrevCycle": 0
+                            })
+
+                    cycle_type = ["Curr", "Prev"]
 
                     for idx, (start_time, end_time) in enumerate(zip(cycle_begins, cycle_ends)):
 
@@ -2663,30 +2756,47 @@ class TrafficFeatureExtract(CoreEventUtils):
                             # Filter events for the current phase
                             df_event_phase = df_event_cycle[df_event_cycle["eventParam"] == phase_no].reset_index(drop=True)
 
-                            # Calculate the total number of events for the phase
-                            phase_pedestrian_volume = len(df_event_phase)
-                            dict_pedestrian_volume_id[f"pedestrianVolumePhase{phase_no}{cycles[idx]}Cycle"] = phase_pedestrian_volume
-                            
-                            dict_pedestrian_volume_id[f"pedestrianVolumePhase{phase_no}"] += phase_pedestrian_volume
+                            for event_code in event_codes:
+                                df_event_code = df_event_phase[df_event_phase["eventCode"] == event_code]
+                                df_event_code = df_event_code.sort_values(by="timeStamp").reset_index(drop=True)
 
-                    # Append the cycle-specific pedestrian volume data to the DataFrame
-                    df_pedestrian_volume_id = pd.concat([df_pedestrian_volume_id, pd.DataFrame([dict_pedestrian_volume_id])], 
+                                if len(df_event_code) > 1:
+                                    base_timestamp = df_event_code.loc[0, "timeStamp"]
+                                    indices_to_drop = []
+                                    for i in range(1, len(df_event_code)):
+                                        timestamp = df_event_code.loc[i, "timeStamp"]
+
+                                        if (timestamp - base_timestamp).total_seconds() < 2.5:
+                                            indices_to_drop.append(i)
+                                        else:
+                                            base_timestamp = timestamp
+                                    
+                                    df_event_code = df_event_code.drop(index=indices_to_drop) 
+
+                                # Calculate the total number of events for the phase
+                                phase_pedestrian_activity = len(df_event_code)
+                                dict_pedestrian_activity_id[f"pedestrianActivity{event_code}Phase{phase_no}{cycle_type[idx]}Cycle"] = phase_pedestrian_activity
+                                
+                                dict_pedestrian_activity_id[f"pedestrianActivity{event_code}Phase{phase_no}"] += phase_pedestrian_activity
+
+                    # Append the cycle-specific pedestrian activity data to the DataFrame
+                    df_pedestrian_activity_id = pd.concat([df_pedestrian_activity_id, pd.DataFrame([dict_pedestrian_activity_id])], 
                                                         axis=0, ignore_index=True)
 
                 # Add date information to the DataFrame
-                df_pedestrian_volume_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
+                df_pedestrian_activity_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
 
             # Cycle-Level
-            # Define the directory path to save the pedestrian volume data
+            # Define the directory path to save the pedestrian activity data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="cycle",
                 event_type="pedestrian_traffic",
-                feature_name="volume",
+                feature_name="activity",
                 signal_id=signal_id
             )
 
-            # Save the pedestrian volume data as a .pkl file
-            export_data(df=df_pedestrian_volume_id,
+            # Save the pedestrian activity data as a .pkl file
+            export_data(df=df_pedestrian_activity_id,
                         base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
                         sub_dirpath=production_feature_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
@@ -2694,33 +2804,35 @@ class TrafficFeatureExtract(CoreEventUtils):
             
             # Hourly
             if len(df_pedestrian_cycle_profile_id) != 0:
-                df_pedestrian_volume_id_hourly = self.calculate_hourly_aggregates(df=df_pedestrian_volume_id, 
-                                                                                only_sum=True)
+                columns = [column for column in df_pedestrian_activity_id.columns if "Activity" in column]
+                df_pedestrian_activity_id_hourly = self.calculate_hourly_aggregates(df=df_pedestrian_activity_id, 
+                                                                                    columns=columns,
+                                                                                    only_sum=True)
             else:
-                df_pedestrian_volume_id_hourly = pd.DataFrame()
+                df_pedestrian_activity_id_hourly = pd.DataFrame()
 
-            # Define the directory path to save the pedestrian volume data
+            # Define the directory path to save the pedestrian activity data
             _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
                 resolution_level="hourly",
                 event_type="pedestrian_traffic",
-                feature_name="volume",
+                feature_name="activity",
                 signal_id=signal_id
             )
 
-            # Save the pedestrian volume data as a .pkl file
-            export_data(df=df_pedestrian_volume_id_hourly,
+            # Save the pedestrian activity data as a .pkl file
+            export_data(df=df_pedestrian_activity_id_hourly,
                         base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
                         sub_dirpath=production_feature_dirpath,
                         filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
                         file_type="pkl")
 
             # Log successful extraction
-            logging.info(f"Pedestrian volume data successfully extracted and saved for signal ID: {signal_id}")
-            return df_pedestrian_volume_id
+            logging.info(f"Pedestrian activity data successfully extracted and saved for signal ID: {signal_id}")
+            return df_pedestrian_activity_id
 
         except Exception as e:
-            logging.error(f"Error extracting pedestrian volume for signal ID: {signal_id}: {e}")
-            raise CustomException(custom_message=f"Error extracting pedestrian volume for signal ID: {signal_id}", 
+            logging.error(f"Error extracting pedestrian activity for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting pedestrian activity for signal ID: {signal_id}", 
                                 sys_module=sys)
         
     def extract_pedestrian_delay(self, signal_id: str):
@@ -2755,9 +2867,6 @@ class TrafficFeatureExtract(CoreEventUtils):
                            .reset_index(drop=True)
             )
 
-            # Ensure consistent data types for merged data
-            df_event_id = float_to_int(df_event_id)
-
             # Initialize an empty DataFrame to store the final pedestrian volume data
             df_pedestrian_delay_id = pd.DataFrame()
 
@@ -2789,8 +2898,8 @@ class TrafficFeatureExtract(CoreEventUtils):
                         cycle_begins = [cycle_begin_prev, cycle_begin]
                         cycle_ends = [cycle_end_prev, cycle_end]
                     else:
-                        cycle_begins = [cycle_begin]
-                        cycle_ends = [cycle_end]
+                        cycle_begins = [cycle_begin - pd.Timedelta("1.5min"), cycle_begin]
+                        cycle_ends = [cycle_begin, cycle_end]
 
                     # Initialize a dictionary to store delay data for the current cycle
                     dict_pedestrian_delay_id = {
@@ -2817,10 +2926,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                         (df_event_id["timeStamp"] <= cycle_ends[-1])
                     ].sort_values(by=["timeStamp", "eventParam"]).reset_index(drop=True)
 
-                    if len(cycle_begins) > 1:
-                        cycles = ["Prev", "Curr"]
-                    else:
-                        cycles = ["Curr"]
+                    cycle_types = ["Prev", "Curr"]
 
                     for idx, (start_time, end_time) in enumerate(zip(cycle_begins, cycle_ends)):
                         # Process each phase
@@ -2874,7 +2980,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                                     continue
 
                                 # Calculate the delay for the phase
-                                dict_pedestrian_delay_id[f"pedestrianDelayPhase{phase_no}{cycles[idx]}Cycle"] = phase_pedestrian_delay
+                                dict_pedestrian_delay_id[f"pedestrianDelayPhase{phase_no}{cycle_types[idx]}Cycle"] = phase_pedestrian_delay
                                 
                                 dict_pedestrian_delay_id[f"pedestrianDelayPhase{phase_no}"] += phase_pedestrian_delay
 
@@ -2904,7 +3010,9 @@ class TrafficFeatureExtract(CoreEventUtils):
             
             # Hourly
             if len(df_pedestrian_cycle_profile_id) != 0:
-                df_pedestrian_delay_id_hourly = self.calculate_hourly_aggregates(df=df_pedestrian_delay_id)
+                columns = [column for column in df_pedestrian_delay_id.columns if "Delay" in column]
+                df_pedestrian_delay_id_hourly = self.calculate_hourly_aggregates(df=df_pedestrian_delay_id, 
+                                                                                 columns=columns)
             else:
                 df_pedestrian_delay_id_hourly = pd.DataFrame()
 
@@ -2932,7 +3040,414 @@ class TrafficFeatureExtract(CoreEventUtils):
             raise CustomException(custom_message=f"Error extracting pedestrian delay for signal ID: {signal_id}", 
                                 sys_module=sys)
         
-    
+    def extract_turn_conflict_intensity(self, signal_id: str):
+        """
+        Extracts cycle-level vehicle-pedestrian conflict intensity for a given signal ID. Specifically, 
+        extracts conflict insights of righ-turn vehicle with pedestrian activity.
+        The insights can be extracted using various methods considering the type of detector configuration for 
+        right-turn lanes (i.e., 'Right', 'Through Right', 'Left Right', or 'Left Through Right'). 
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing cycle-level vehicle-pedestrian conflict intensity for the specified signal ID.
+
+        Raises:
+        -------
+        CustomException
+            If an error occurs during vehicle-pedestrian conflict intensity extraction.
+        """
+        try:
+            # Load event, configuration, and vehicle cycle profile data
+            df_event_id, df_config_id, df_vehicle_cycle_profile_id, df_pedestrian_cycle_profile_id = self._load_data(signal_id=signal_id)
+
+            dict_map = {
+                1: 6, 5: 2, 3: 8, 7: 4
+            }
+
+            df_config_id = float_to_int(df_config_id)
+            df_config_id = self._abbreviate_directions(df_config=df_config_id, column_name="laneType")
+            df_config_id_back = self._filter_config_by_detector(df_config=df_config_id, detector_type="back")
+
+            indices_to_drop = []
+            for approach in df_config_id["approach"].unique().tolist():
+                df_config_approach = df_config_id[df_config_id["approach"] == approach]
+
+                phase_nos = df_config_approach["phaseNo"].unique().tolist()
+
+                for phase_no in phase_nos:
+                    if phase_no % 2 == 0:
+                        break
+                    else: 
+                        phase_no = dict_map[phase_no]
+                        break
+
+                for idx in df_config_approach.index.values:
+                    if "R" not in df_config_approach.loc[idx, "laneType"]:
+                        indices_to_drop.append(idx)
+
+                    df_config_id = df_config_id.copy()
+                    df_config_id.loc[idx:idx+1, "phaseNo"] = df_config_id.loc[idx:idx+1, "phaseNo"].fillna(phase_no)
+
+            # Filter event data for event sequence [45, 90] (i.e., pedestrian call registered and pedestrian detector off)
+            df_event_id_pedestrian = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[45, 90])
+
+            # Drop duplicates based on time, and event param
+            df_event_id_pedestrian = (
+                df_event_id_pedestrian.drop_duplicates(subset=["timeStamp", "eventParam"])
+                .reset_index(drop=True)
+            )
+
+            df_config_id = df_config_id.drop(index=indices_to_drop)
+
+            # Initialize an empty DataFrame to store the final turn conflict intensity data
+            df_turn_conflict_intensity_id = pd.DataFrame()
+
+            if len(df_pedestrian_cycle_profile_id) != 0:
+                cycle_nos = sorted(df_pedestrian_cycle_profile_id["cycleNo"].unique())  # Get sorted unique cycle numbers
+                cycle_nos_vehicle = df_vehicle_cycle_profile_id["cycleNo"].unique()
+
+                # Iterate through each cycle in the vehicle cycle profile data
+                for cycle_no in tqdm.tqdm(cycle_nos):
+                    df_pedestrian_cycle_profile_cycle = (
+                        df_pedestrian_cycle_profile_id[df_pedestrian_cycle_profile_id["cycleNo"] == cycle_no].reset_index(drop=True)
+                    )
+
+                    # Extract signal and cycle details
+                    signal_id = df_pedestrian_cycle_profile_cycle["signalID"][0]
+
+                    cycle_begin = df_pedestrian_cycle_profile_cycle.loc[0, "cycleBegin"]
+                    cycle_end = df_pedestrian_cycle_profile_cycle.loc[0, "cycleEnd"]
+
+                    if (cycle_no - 1) in cycle_nos_vehicle:
+                        cycle_begin_prev = (
+                            df_vehicle_cycle_profile_id[df_vehicle_cycle_profile_id["cycleNo"] == (cycle_no - 1)]["cycleBegin"].values[0]
+                        )
+                        cycle_end_prev = (
+                            df_vehicle_cycle_profile_id[df_vehicle_cycle_profile_id["cycleNo"] == (cycle_no - 1)]["cycleEnd"].values[0]
+                        )
+                        
+                        cycle_begins = [cycle_begin_prev, cycle_begin]
+                        cycle_ends = [cycle_end_prev, cycle_end]
+                    else:
+                        cycle_begins = [cycle_begin - pd.Timedelta("1.5min"), cycle_begin]
+                        cycle_ends = [cycle_begin, cycle_end]
+
+                    # Initialize a dictionary to store turn conflict intensity data for the current cycle
+                    dict_turn_conflict_intensity_id = {
+                        "signalID": signal_id,
+                        "cycleNo": cycle_no,
+                        "cycleBegin": cycle_begin,
+                        "cycleEnd": cycle_end
+                    }
+
+                    # Filter events within the current and previous cycle's time range
+                    df_event_tolerance_pedestrian = (
+                        df_event_id_pedestrian[(df_event_id_pedestrian["timeStamp"] >= cycle_begins[0]) & 
+                                               (df_event_id_pedestrian["timeStamp"] <= cycle_ends[-1])
+                                   ]
+                        .sort_values(by=["timeStamp", "eventParam"])
+                        .reset_index(drop=True)
+                    )
+
+                    phase_nos = df_config_id["phaseNo"].unique().tolist()
+
+                    # Initialize phase-specific turn conflict intensity keys in the dictionary
+                    for phase_no in phase_nos:
+                        lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
+                        
+                        for lane_type in lane_types:
+                            dict_turn_conflict_intensity_id.update({
+                                f"vehicleOccupancyPhase{phase_no}{lane_type}":0,
+                                f"pedestrianActivityDurationPhase{phase_no}{lane_type}":0,
+                                f"vehicleOccupancyRatioPhase{phase_no}{lane_type}":0,
+                                f"vehicleVolumePhase{phase_no}{lane_type}":0,
+                                f"pedestrianActivityPhase{phase_no}{lane_type}":0,
+                            })
+
+                    for phase_no in phase_nos:
+                        df_config_phase = df_config_id[df_config_id["phaseNo"] == phase_no]
+                        df_config_phase = df_config_phase.reset_index(drop=True)
+                        
+                        df_pedestrian_cycle_profile_phase = (
+                            df_pedestrian_cycle_profile_cycle[df_pedestrian_cycle_profile_cycle["phaseNo"] == phase_no]
+                        )
+
+                        cycle_nos_phase = (
+                            sorted(df_pedestrian_cycle_profile_phase["cycleNo"].unique().tolist())
+                        )
+
+                        if (len(df_config_phase) == 0) or (len(df_pedestrian_cycle_profile_phase) == 0):
+                            continue
+
+                        # Get pedestrian activity duration
+                        activity_end_time = (
+                            df_pedestrian_cycle_profile_phase.loc[df_pedestrian_cycle_profile_phase.index[-1], "pedestrianDontWalkBegin"]
+                        )
+
+                        # Filter events for the current phase
+                        df_event_phase_pedestrian = (
+                            df_event_tolerance_pedestrian[df_event_tolerance_pedestrian["eventParam"] == phase_no]
+                            .reset_index(drop=True)
+                        )
+
+                        for _, end_time in zip(cycle_begins, cycle_ends):
+                            if len(df_event_phase_pedestrian) == 0:
+                                activity_start_time = end_time
+                                break
+                            else:
+                                if (cycle_no - 1) in cycle_nos_phase:
+                                    dont_walk_begin = (
+                                        df_pedestrian_cycle_profile_id[
+                                            ((df_pedestrian_cycle_profile_id["cycleNo"] == (cycle_no - 1)) & 
+                                             (df_pedestrian_cycle_profile_id["phaseNo"] == phase_no))
+                                        ]                             
+                                        .reset_index(drop=True)
+                                        .loc[0, "pedestrianDontWalkBegin"]
+                                    )
+                                    for i in range(len(df_event_phase_pedestrian)):
+                                        button_press_time = df_event_phase_pedestrian.loc[i, "timeStamp"]
+                                        if dont_walk_begin < button_press_time:
+                                            activity_start_time = button_press_time 
+                                            break 
+                                else:
+                                    button_press_times = df_event_phase_pedestrian["timeStamp"].unique().tolist()
+                                    activity_start_time = min(button_press_times) 
+                                    break 
+
+                        df_config_phase_front = (
+                            self._filter_config_by_detector(df_config=df_config_phase, detector_type="front")
+                        )
+
+                        if (len(df_config_phase_front) != 0):
+                            lane_types = (
+                                df_config_phase_front["laneType"].unique().tolist()
+                            )
+
+                            for lane_type in lane_types:
+                                df_config_lane_type = (
+                                    df_config_phase_front[df_config_phase_front["laneType"] == lane_type]
+                                                         .reset_index(drop=True)
+                                )
+
+                                dict_turn_conflict_intensity_id[f"pedestrianActivityDurationPhase{phase_no}{lane_type}"] = (
+                                    round((activity_end_time - activity_start_time).total_seconds(), 4)
+                                )
+
+                                lane_nos = df_config_lane_type["laneNoFromLeft"].unique().tolist()
+
+                                vehicle_occupancies = [np.nan]
+                                for lane_no in lane_nos:
+                                    df_config_lane_no = (
+                                        df_config_lane_type[df_config_lane_type["laneNoFromLeft"] == lane_no]
+                                                           .reset_index(drop=True)
+                                    )
+                                    channel_nos = df_config_lane_no["channelNo"].unique().tolist()
+                                    channel_nos = [channel_no for channel_no in channel_nos if pd.notna(channel_no)]
+
+                                    if not channel_nos:
+                                        continue
+
+                                    vehicle_occupancy = 0 
+                                    for channel_no in channel_nos:
+                                        df_config_channel = (
+                                            df_config_lane_no[df_config_lane_no["channelNo"] == channel_no]
+                                                             .reset_index(drop=True)
+                                        )
+
+                                        if len(df_config_channel) == 0:
+                                            continue
+
+                                        df_event_channel_vehicle = (
+                                            self.filter_by_event_sequence(df_event=df_event_id, 
+                                                                          event_sequence=[82, 81])                       
+                                            .loc[
+                                                (df_event_id["timeStamp"] >= (activity_start_time - pd.Timedelta("0.5min"))) 
+                                                & (df_event_id["timeStamp"] <= (activity_end_time + pd.Timedelta("0.5min")))
+                                            ]
+                                            .sort_values(by=["timeStamp", "eventParam"])
+                                            .reset_index(drop=True)
+                                        )
+
+                                        if len(df_event_channel_vehicle) == 0:
+                                            continue
+
+                                        df_event_channel_vehicle = df_event_channel_vehicle.copy()
+
+                                        # Join event data with configuration data on channel number
+                                        df_event_channel_vehicle = (
+                                            df_event_channel_vehicle
+                                            .merge(
+                                                df_config_channel,
+                                                how="inner",
+                                                left_on="eventParam",
+                                                right_on="channelNo"
+                                            )
+                                            .pipe(float_to_int)  # Ensure consistent data types
+                                        )
+
+                                        # Assign sequence IDs to on/off events
+                                        df_event_channel_vehicle = df_event_channel_vehicle.copy()
+                                        df_event_channel_vehicle["sequenceID"] = self.add_event_sequence_id(
+                                            df_event_channel_vehicle, valid_event_sequence=[82, 81]
+                                        )
+
+                                        for sequence_id in df_event_channel_vehicle["sequenceID"].unique():
+                                        # Filter events for the current sequence
+                                            df_event_sequence_vehicle = (
+                                                df_event_channel_vehicle
+                                                [df_event_channel_vehicle["sequenceID"] == sequence_id]
+                                                .reset_index(drop=True)
+                                            )
+
+                                            # Skip incomplete sequences (missing on/off events)
+                                            if len(df_event_sequence_vehicle) != 2:
+                                                continue
+
+                                            # Extract detector on/off times
+                                            detector_ont = df_event_sequence_vehicle["timeStamp"][0]
+                                            detector_oft = df_event_sequence_vehicle["timeStamp"][1]
+
+                                            # Calculate occupancy 
+                                            if detector_ont < detector_oft:
+                                                time_diff = round((detector_oft - detector_ont).total_seconds(), 4)
+                                                vehicle_occupancy += time_diff
+
+                                    vehicle_occupancies.append(vehicle_occupancy)
+                                
+                                dict_turn_conflict_intensity_id[f"vehicleOccupancyPhase{phase_no}{lane_type}"] = (
+                                    round(np.nanmean(vehicle_occupancies), 4)
+                                )
+
+                        df_config_phase_back = (
+                            self._filter_config_by_detector(df_config=df_config_phase, detector_type="back")
+                        )
+
+                        if (len(df_config_phase_back) != 0):
+                            lane_types = (
+                                df_config_phase_back["laneType"].unique().tolist()
+                            )
+
+                            for lane_type in lane_types:
+                                channel_nos = (
+                                    df_config_id
+                                    [((df_config_id["phaseNo"] == phase_no) & 
+                                      (df_config_id["laneType"] == lane_type))]
+                                      ["channelNo"].unique().tolist()
+                                )
+                                
+                                channel_nos = [channel_no for channel_no in channel_nos if pd.notna(channel_no)]
+
+                                if not channel_nos:
+                                    continue
+
+                                vehicle_volume = 0 
+                                for channel_no in channel_nos:
+                                    df_event_channel_vehicle = (
+                                        self.filter_by_event_sequence(df_event=df_event_id, 
+                                                                      event_sequence=[81])                       
+                                        .loc[
+                                            (df_event_id["timeStamp"] >= (activity_start_time - pd.Timedelta("0.5min"))) 
+                                            & (df_event_id["timeStamp"] <= (activity_end_time + pd.Timedelta("0.5min")))
+                                        ]
+                                        .sort_values(by=["timeStamp", "eventParam"])
+                                        .reset_index(drop=True)
+                                    )
+
+                                    if len(df_event_channel_vehicle) == 0:
+                                        continue
+
+                                    df_event_channel_vehicle = df_event_channel_vehicle.copy()
+
+                                    # Join event data with configuration data on channel number
+                                    df_event_channel_vehicle = (
+                                        df_event_channel_vehicle
+                                        .merge(
+                                            df_config_channel,
+                                            how="inner",
+                                            left_on="eventParam",
+                                            right_on="channelNo"
+                                        )
+                                        .pipe(float_to_int)  # Ensure consistent data types
+                                    )
+
+                                    if len(df_event_channel_vehicle) == 0:
+                                        continue
+
+                                    vehicle_volume += len(df_event_channel_vehicle)
+                            
+                            dict_turn_conflict_intensity_id[f"vehicleVolumePhase{phase_no}{lane_type}"] = (
+                                vehicle_volume
+                            )       
+
+                    # Append the cycle-specific turn conflict intensity data to the DataFrame
+                    df_turn_conflict_intensity_id = (
+                        pd.concat([df_turn_conflict_intensity_id, pd.DataFrame([dict_turn_conflict_intensity_id])], 
+                                   axis=0, ignore_index=True)
+                    )
+
+                    
+
+                # Add date information to the DataFrame
+                df_turn_conflict_intensity_id["date"] = (
+                    pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
+                )
+
+            # # Cycle-Level
+            # # Define the directory path to save the turn conflict intensity data
+            # _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            #     resolution_level="cycle",
+            #     event_type="pedestrian_traffic",
+            #     feature_name="turn_conflict_intensity",
+            #     signal_id=signal_id
+            # )
+
+            # # Save the turn conflict intensity data as a .pkl file
+            # export_data(df=df_turn_conflict_intensity_id,
+            #             base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+            #             sub_dirpath=production_feature_dirpath,
+            #             filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+            #             file_type="pkl")
+            
+            # # Hourly
+            # if len(df_pedestrian_cycle_profile_id) != 0:
+            #     columns = [column for column in df_turn_conflict_intensity_id.columns if "Conflict" in column]
+            #     df_turn_conflict_intensity_id = (
+            #         self.calculate_hourly_aggregates(df=df_turn_conflict_intensity_id, 
+            #                                          columns=columns)
+            #     )
+            # else:
+            #     df_turn_conflict_intensity_id = pd.DataFrame()
+
+            # # Define the directory path to save the turn conflict intensity data
+            # _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+            #     resolution_level="hourly",
+            #     event_type="pedestrian_traffic",
+            #     feature_name="turn_conflict_intensity",
+            #     signal_id=signal_id
+            # )
+
+            # # Save the turn conflict intensity data as a .pkl file
+            # export_data(df=df_turn_conflict_intensity_id,
+            #             base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+            #             sub_dirpath=production_feature_dirpath,
+            #             filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+            #             file_type="pkl")
+
+            # # Log successful extraction
+            # logging.info(f"Turn conflict intensity data successfully extracted and saved for signal ID: {signal_id}")
+            return df_turn_conflict_intensity_id
+
+        except Exception as e:
+            logging.error(f"Error extracting turn conflict intensity for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting turn conflict intensity for signal ID: {signal_id}", 
+                                sys_module=sys)
+
 
 
 
