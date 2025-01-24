@@ -146,9 +146,16 @@ def float_to_int(df: pd.DataFrame):
     for column in df.columns:
         # Check if the column's data type is float64
         if df[column].dtype == 'float64':
-            # Convert the column to Int64 type
-            df[column] = df[column].astype('Int64')
-    
+            df = df.copy()
+            
+            # Check if the column contains any NaN values
+            if df[column].isna().any():
+                # Convert the column to nullable integer (Int64)
+                df[column] = df[column].astype('Int64')
+            else:
+                # Convert the column to regular integer (int)
+                df[column] = df[column].astype(int)
+        
     return df
 
 
