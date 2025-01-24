@@ -15,5 +15,8 @@ psutil
 rich
 matplotlib
 seaborn
+plotly
+ipywidgets
+scikit-learn
 
 # -e .
