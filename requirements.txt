@@ -18,5 +18,6 @@ seaborn
 plotly
 ipywidgets
 scikit-learn
+kaleido
 
 # -e .
