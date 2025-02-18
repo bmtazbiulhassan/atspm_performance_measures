@@ -47,14 +47,15 @@ class DataSort:
                 }
             
             # Filter data for the specified signal ID and reset the index
-            df_event_id = df_event[df_event[dict_column_names["signalID"]].astype(str) == signal_id].reset_index(drop=True)
+            df_event_id = (
+                df_event[df_event[dict_column_names["signalID"]].astype(str) == signal_id].reset_index(drop=True)
+            )
 
             # Parse and sort timestamps
-            df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]], 
-                                                                    format="%m-%d-%Y %H:%M:%S.%f")
+            df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]])
             
             # Adjustment for eastern time zone
-            df_event_id[dict_column_names["time"]] = df_event_id[dict_column_names["time"]] + pd.Timedelta(hours=4)
+            # df_event_id[dict_column_names["time"]] = df_event_id[dict_column_names["time"]] + pd.Timedelta(hours=4)
             df_event_id = df_event_id.sort_values(by=dict_column_names["time"]).reset_index(drop=True)
             
             # Path (from database directory) to directory where sorted event data will be exported
@@ -75,8 +76,7 @@ class DataSort:
 
             # Convert the timestamp column to datetime if it is not already
             if not pd.api.types.is_datetime64_any_dtype(df_event[dict_column_names["time"]]):
-                df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]], 
-                                                                        format="%Y-%m-%d %H:%M:%S.%f")
+                df_event_id[dict_column_names["time"]] = pd.to_datetime(df_event_id[dict_column_names["time"]])
                 
             # Create a new 'date' column containing only the date part (no time)
             df_event_id['date'] = df_event_id[dict_column_names["time"]].dt.date
