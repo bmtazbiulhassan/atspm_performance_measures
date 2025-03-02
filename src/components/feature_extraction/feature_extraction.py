@@ -1609,7 +1609,8 @@ class TrafficFeatureExtract(CoreEventUtils):
                             f"greenOccupancyPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
                             f"yellowOccupancyPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
                             f"redClearanceOccupancyPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
-                            f"redOccupancyPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos)
+                            f"redOccupancyPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
+                            f"red5OccupancyPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos)
                         })
 
                 # Set a time tolerance window for capturing overlapping events at cycle boundaries
@@ -1637,19 +1638,33 @@ class TrafficFeatureExtract(CoreEventUtils):
                     lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
 
                     # Define signal types to process
-                    signal_types = ["green", "yellow", "redClearance", "red"]
+                    signal_types = ["green", "yellow", "redClearance", "red", "red5"]
 
                     for signal_type in signal_types:
-                        # Get timestamps for the current signal type and phase
-                        timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
+                        if signal_type == "red5":
+                            # Get timestamps for the current signal type and phase
+                            timestamps = df_vehicle_cycle_profile_id.loc[i, f"redClearancePhase{phase_no}"]
 
-                        # Ensure timestamps are in list format
-                        if not isinstance(timestamps, list):
-                            timestamps = [timestamps]
+                             # Ensure timestamps are in list format
+                            if not isinstance(timestamps, list):
+                                timestamps = [timestamps]
 
-                        # Skip if no valid timestamps exist
-                        if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
-                            continue
+                            # Skip if no valid timestamps exist
+                            if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
+                                continue
+
+                            timestamps = [tuple([timestamps[0][0], timestamps[0][0] + pd.Timedelta(seconds=5)])]
+                        else:          
+                            # Get timestamps for the current signal type and phase
+                            timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
+
+                            # Ensure timestamps are in list format
+                            if not isinstance(timestamps, list):
+                                timestamps = [timestamps]
+
+                            # Skip if no valid timestamps exist
+                            if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
+                                continue
                         
                         for lane_type in lane_types:
                             df_config_lane_type = (
@@ -1875,7 +1890,7 @@ class TrafficFeatureExtract(CoreEventUtils):
             raise CustomException(custom_message=f"Error extracting occupancy for signal ID: {signal_id}", 
                                 sys_module=sys)
 
-    def extract_split_failure(self, signal_id: str):
+    def extract_split_failure(self, signal_id: str, purdue_standard: True):
         """
         Extracts split failure information for a given signal ID by comparing SPaT and occupancy data.
 
@@ -1883,6 +1898,8 @@ class TrafficFeatureExtract(CoreEventUtils):
         -----------
         signal_id : str
             Unique identifier for the traffic signal.
+        purdue_standard: bool
+            Determine split failure based on formulation provided by purdue.
 
         Returns:
         --------
@@ -1925,10 +1942,13 @@ class TrafficFeatureExtract(CoreEventUtils):
             df_spat_id = df_spat_id[["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"] + spat_columns]
 
             # Extract green occupancy columns from occupancy data
-            occupancy_columns = [col for col in df_occupancy_id.columns if "greenAvgOccupancyPhase" in col]
+            green_occupancy_columns = [col for col in df_occupancy_id.columns if "greenAvgOccupancyPhase" in col]
+            red5_occupancy_columns = [col for col in df_occupancy_id.columns if "redAvg5OccupancyPhase" in col]
 
             # Keep only relevant columns in occupancy data
-            df_occupancy_id = df_occupancy_id[["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"] + occupancy_columns]
+            df_occupancy_id = df_occupancy_id[
+                ["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"] + green_occupancy_columns + red5_occupancy_columns
+            ]
 
             # Merge SPaT and occupancy data on common keys
             df_split_failure_id = pd.merge(
@@ -1937,7 +1957,7 @@ class TrafficFeatureExtract(CoreEventUtils):
                 on=["signalID", "cycleNo", "date", "cycleBegin", "cycleEnd", "cycleLength"]
             )
 
-            columns = spat_columns + occupancy_columns
+            columns = spat_columns + green_occupancy_columns
 
             # Extract phase nos
             phase_nos = [col.split('Phase')[-1][0] for col in columns if 'Phase' in col]
@@ -1948,33 +1968,61 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Keep only those phases that appear at least twice
             phase_nos = [phase_no for phase_no, count in dict_phase_counts.items() if count > 1]
 
-            # Filter the columns to include only valid phases
-            columns = [col for col in columns if any(f"Phase{phase_no}" in col for phase_no in phase_nos)]
+            # # Filter the columns to include only valid phases
+            # columns = [col for col in columns if any(f"Phase{phase_no}" in col for phase_no in phase_nos)]
             # columns = sorted(columns, key=lambda x: x[-1])
             
             for phase_no in phase_nos:
                 spat_column = next((col for col in spat_columns if phase_no in col))
 
-                for occupancy_column in occupancy_columns:
-                    if phase_no not in occupancy_column:
+                for green_occupancy_column in green_occupancy_columns:
+                    if phase_no not in green_occupancy_column:
                         continue
 
-                    lane_type = occupancy_column.split(f"Phase{phase_no}")[-1]
+                    lane_type = green_occupancy_column.split(f"Phase{phase_no}")[-1]
 
-                    # Calculate split failure for the green phase
-                    # Compute split failure flags: occupancy values exceeding green time
                     df_split_failure_id[f"greenSplitFailurePhase{phase_no}{lane_type}"] = df_split_failure_id.apply(
                         lambda row: [
-                            row[occupancy_column] / (row[spat_column] if row[spat_column] != 0 else 1)
+                            row[green_occupancy_column] / (row[spat_column] if row[spat_column] != 0 else 1)
                         ],
                         axis=1
                     )
 
-                    # Convert to binary flags: 1 if any occupancy exceeds 100% of green time, else 0
-                    df_split_failure_id[f"greenSplitFailurePhase{phase_no}{lane_type}"] = df_split_failure_id[
-                        f"greenSplitFailurePhase{phase_no}{lane_type}"
-                    ].apply(lambda vals: 1 if any(val >= 1 for val in vals) else 0)
+                    if not purdue_standard:
+                        # Convert to binary flags: 1 if any occupancy exceeds 100% of green time, else 0
+                        df_split_failure_id[f"greenSplitFailurePhase{phase_no}{lane_type}"] = df_split_failure_id[
+                            f"greenSplitFailurePhase{phase_no}{lane_type}"
+                        ].apply(lambda vals: 1 if any(val >= 1 for val in vals) else 0)
+                    else:
+                        # Convert to binary flags: 1 if any occupancy exceeds 80% of green time, else 0
+                        df_split_failure_id[f"greenSplitFailurePhase{phase_no}{lane_type}"] = df_split_failure_id[
+                            f"greenSplitFailurePhase{phase_no}{lane_type}"
+                        ].apply(lambda vals: 1 if any(val >= 0.8 for val in vals) else 0)
 
+            if purdue_standard:
+                for phase_no in phase_nos:
+                    for red5_occupancy_column in red5_occupancy_columns:
+                        if f"Phase{phase_no}" not in red5_occupancy_column:
+                            continue
+
+                        lane_type = red5_occupancy_column.split(f"Phase{phase_no}")[-1]
+
+                        df_split_failure_id[f"red5SplitFailurePhase{phase_no}{lane_type}"] = df_split_failure_id.apply(
+                            lambda row: [
+                                row[red5_occupancy_column] / 5
+                            ],
+                            axis=1
+                        )
+
+                        # Convert to binary flags: 1 if any occupancy exceeds 80% of green time, else 0
+                        df_split_failure_id[f"red5SplitFailurePhase{phase_no}{lane_type}"] = df_split_failure_id[
+                            f"red5SplitFailurePhase{phase_no}{lane_type}"
+                        ].apply(lambda vals: 1 if any(val >= 0.8 for val in vals) else 0)
+
+                occupancy_columns = green_occupancy_columns + red5_occupancy_columns 
+            else:
+                occupancy_columns = green_occupancy_columns
+                
 
             # Drop the intermediate columns for this phase
             df_split_failure_id = df_split_failure_id.drop(columns=spat_columns + occupancy_columns)
@@ -2367,6 +2415,244 @@ class TrafficFeatureExtract(CoreEventUtils):
             # Log errors and raise a custom exception for debugging
             logging.error(f"Error extracting conflict data for signal ID: {signal_id}: {e}")
             raise CustomException(custom_message=f"Error extracting conflict data for signal ID: {signal_id}", 
+                                sys_module=sys)
+
+    def extract_gap(self, signal_id: str):
+        """
+        Extracts gap data for a given signal ID at a cycle level.
+
+        Parameters:
+        -----------
+        signal_id : str
+            Unique identifier for the traffic signal.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing gap data for each cycle and phase.
+        """
+        try:
+            # Load required data
+            df_event_id, df_config_id, df_vehicle_cycle_profile_id, _ = self._load_data(signal_id=signal_id)
+
+            # Filter event data for the event sequence [81, 82] (detector on/off events)
+            df_event_id = self.filter_by_event_sequence(df_event=df_event_id, event_sequence=[81, 82])
+
+            # Clean and filter configuration data
+            # Remove rows with missing phase numbers
+            df_config_id = df_config_id[pd.notna(df_config_id["phaseNo"])].reset_index(drop=True)
+            df_config_id = float_to_int(df_config_id)
+
+            # Filter configuration data for the stop bar (front detector)
+            df_config_id = self._filter_config_by_detector(df_config=df_config_id, detector_type="back")
+            df_config_id = self._abbreviate_directions(df_config=df_config_id, column_name="laneType")
+
+            # Join event data with configuration data on channel number
+            df_event_id = pd.merge(df_event_id, df_config_id, 
+                                   how="inner", 
+                                   left_on=["eventParam"], right_on=["channelNo"])
+
+            # Ensure consistent data types
+            df_event_id = float_to_int(df_event_id)
+
+            # Initialize an empty DataFrame to store gaps data
+            df_gap_id = pd.DataFrame()
+
+            # Process each cycle in the vehicle cycle profile
+            for i in tqdm.tqdm(range(len(df_vehicle_cycle_profile_id))):
+                # Extract signal and cycle information
+                signal_id = df_vehicle_cycle_profile_id["signalID"][i]
+                cycle_no = df_vehicle_cycle_profile_id["cycleNo"][i]
+                cycle_begin = df_vehicle_cycle_profile_id.loc[i, "cycleBegin"]
+                cycle_end = df_vehicle_cycle_profile_id.loc[i, "cycleEnd"]
+                cycle_length = df_vehicle_cycle_profile_id.loc[i, "cycleLength"]
+
+                # Initialize a dictionary to store occupancy data for the current cycle
+                dict_gap_id = {
+                    "signalID": signal_id,
+                    "cycleNo": cycle_no,
+                    "cycleBegin": cycle_begin,
+                    "cycleEnd": cycle_end,
+                    "cycleLength": cycle_length
+                }
+
+                # List all unique phase numbers
+                phase_nos = sorted(list(df_event_id["phaseNo"].unique()))
+                phase_nos = [
+                    phase_no for phase_no in phase_nos if any(str(phase_no) in column for column in df_vehicle_cycle_profile_id.columns)
+                ]
+
+                # Add placeholders for phase-specific gap data
+                for phase_no in phase_nos:
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
+                    
+                    for lane_type in lane_types:
+                        channel_nos = df_config_id[((df_config_id["phaseNo"] == phase_no) & 
+                                                    (df_config_id["laneType"] == lane_type))]["channelNo"].unique().tolist()
+
+                        dict_gap_id.update({
+                            f"channelNos{phase_no}{lane_type}": channel_nos,
+                            f"greenGapPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
+                            f"yellowGapPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
+                            f"redClearanceGapPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
+                            f"redGapPhase{phase_no}{lane_type}": [[np.nan]] * len(channel_nos),
+                        })
+
+                # Filter event data within the cycle
+                df_event_cycle = df_event_id[
+                    (df_event_id["timeStamp"] >= cycle_begin) & 
+                    (df_event_id["timeStamp"] <= cycle_end)
+                ].sort_values(by=["timeStamp", "phaseNo", "channelNo"]).reset_index(drop=True)
+
+                # Process each phase and signal type
+                for phase_no in phase_nos:
+                    # Filter event data for the current phase
+                    df_event_phase = (
+                        df_event_cycle[df_event_cycle["phaseNo"] == phase_no]
+                        .reset_index(drop=True)
+                    )
+
+                    lane_types = df_config_id[df_config_id["phaseNo"] == phase_no]["laneType"].unique().tolist()
+
+                    # Define signal types to process
+                    signal_types = ["green", "yellow", "redClearance", "red"]
+
+                    for signal_type in signal_types: 
+                        # Get timestamps for the current signal type and phase
+                        timestamps = df_vehicle_cycle_profile_id.loc[i, f"{signal_type}Phase{phase_no}"]
+
+                        # Ensure timestamps are in list format
+                        if not isinstance(timestamps, list):
+                            timestamps = [timestamps]
+
+                        # Skip if no valid timestamps exist
+                        if (timestamps == [pd.NaT]) or all(pd.isna(timestamp) for timestamp in timestamps):
+                            continue
+                        
+                        for lane_type in lane_types:
+                            channel_nos = (
+                                df_config_id
+                                [((df_config_id["phaseNo"] == phase_no) & (df_config_id["laneType"] == lane_type))]
+                                ["channelNo"]
+                                .unique()
+                                .tolist()
+                            )
+
+                            for channel_no in channel_nos:
+                                df_event_channel = (
+                                    df_event_phase[df_event_phase["channelNo"] == channel_no].reset_index(drop=True)
+                                )
+
+                                if len(df_event_channel) == 0:
+                                    continue
+
+                                gaps = [np.nan]
+
+                                for start_time, end_time in timestamps:
+                                    # Filter event data within the signal's time range
+                                    df_event_signal = df_event_channel[
+                                        (df_event_channel["timeStamp"] >= start_time) & 
+                                        (df_event_channel["timeStamp"] <= end_time)
+                                    ].sort_values(by="timeStamp").reset_index(drop=True)
+
+                                    # Skip if less than two vehicles detected (no headway calculation possible)
+                                    if len(df_event_signal) <= 1:
+                                        continue
+
+                                    # Assign sequence IDs to on/off events
+                                    df_event_signal = df_event_signal.copy()
+                                    df_event_signal["sequenceID"] = self.add_event_sequence_id(
+                                        df_event_signal, valid_event_sequence=[81, 82]
+                                    )
+
+                                    for sequence_id in df_event_signal["sequenceID"].unique():
+                                        # Filter events for the current sequence
+                                        df_event_sequence = (
+                                            df_event_signal
+                                            [df_event_signal["sequenceID"] == sequence_id]
+                                            .reset_index(drop=True)
+                                        )
+
+                                        # Skip incomplete sequences (missing on/off events)
+                                        if len(df_event_sequence) != 2:
+                                            continue
+
+                                        # Extract detector off of preceding vehicle & detector on of following vehicle
+                                        detector_oft_lead = df_event_sequence["timeStamp"][0]
+                                        detector_ont_next = df_event_sequence["timeStamp"][1]
+
+                                        if (detector_oft_lead > end_time) or (detector_ont_next < start_time):
+                                            continue
+
+                                        # Calculate time difference (gaps) between consecutive vehicles
+                                        time_diff = (
+                                            round((detector_ont_next - detector_oft_lead).total_seconds(), 4)
+                                        )
+                                        gaps.append(time_diff)
+
+                                idx = (
+                                    dict_gap_id
+                                    [f"channelNos{phase_no}{lane_type}"]
+                                    .index(channel_no)
+                                )
+
+                                # Store gap data for the current channel
+                                dict_gap_id[f"{signal_type}GapPhase{phase_no}{lane_type}"][idx] = gaps
+
+                # Append the cycle's gap data to the DataFrame
+                df_gap_id = pd.concat([df_gap_id, pd.DataFrame([dict_gap_id])], axis=0, ignore_index=True)
+
+            # Add date information
+            df_gap_id["date"] = pd.Timestamp(f"{self.year}-{self.month:02d}-{self.day:02d}").date()
+
+            # Calculate statistics for gap data
+            columns = [col for col in df_gap_id.columns if "Gap" in col]
+            df_gap_id = self._calculate_stats(df=df_gap_id, column_names=columns, include_sum=False)
+
+            # Cycle-Level
+            # Save the extracted gap data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="cycle",
+                event_type="vehicle_traffic",
+                feature_name="gap",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_gap_id,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Hourly
+            columns = [
+                col for col in df_gap_id.columns if any(keyword in col for keyword in ["Min", "Max", "Avg", "Std"])
+            ]
+            df_gap_id_hourly = self.calculate_hourly_aggregates(df=df_gap_id, columns=columns)
+
+            # Save the extracted gap data
+            _, _, _, production_feature_dirpath = feature_extraction_dirpath.get_feature_extraction_dirpath(
+                resolution_level="hourly",
+                event_type="vehicle_traffic",
+                feature_name="gap",
+                signal_id=signal_id
+            )
+            export_data(
+                df=df_gap_id_hourly,
+                base_dirpath=os.path.join(root_dir, relative_production_database_dirpath),
+                sub_dirpath=production_feature_dirpath,
+                filename=f"{self.year}-{self.month:02d}-{self.day:02d}",
+                file_type="pkl"
+            )
+
+            # Log success and return the data
+            logging.info(f"Headway data successfully extracted and saved for signal ID: {signal_id}")
+            return df_gap_id
+
+        except Exception as e:
+            logging.error(f"Error extracting gap for signal ID: {signal_id}: {e}")
+            raise CustomException(custom_message=f"Error extracting gap for signal ID: {signal_id}", 
                                 sys_module=sys)
 
     def extract_red_running(self, signal_id: str, with_countbar: bool = False):
@@ -2862,6 +3148,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                     # List all unique phase numbers
                     phase_nos = sorted(list(df_event_id["eventParam"].unique()))
+                    phase_nos = list(set(phase_nos).intersection(set([2, 4, 8, 6])))
 
                     # Initialize phase-specific activity keys in the dictionary
                     for phase_no in phase_nos:
@@ -3043,6 +3330,7 @@ class TrafficFeatureExtract(CoreEventUtils):
 
                     # List all unique phase numbers
                     phase_nos = sorted(list(df_event_id["eventParam"].unique()))
+                    phase_nos = list(set(phase_nos).intersection(set([2, 4, 8, 6])))
 
                     # Initialize phase-specific delay keys in the dictionary
                     for phase_no in phase_nos:
