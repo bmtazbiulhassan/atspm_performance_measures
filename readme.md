@@ -14,7 +14,6 @@ This project focuses on **extracting, transforming, and analyzing ATSPM (Automat
 ## **🛠️ Methodology**
 ### **1️⃣ Data Extraction & Transformation**
 - Retrieved **controller event logs** containing **signal phases, detector activations, and pedestrian actuations**.
-- Conducted a **data quality check** using the Event Sequence Quality Checker (ESQC) algorithm.
 - Transformed raw ATSPM logs into key **performance measures**:
   - **Traffic Volume, Occupancy, Headway, Red-Light Running**
   - **Pedestrian Activity Indicator, Pedestrian Delay**
@@ -67,11 +66,11 @@ where:
 ## **📈 Results**
 - **Pedestrian Recall (PR) Recommendations**
   - Identified the **most critical hours** for PR implementation based on statistical clustering.
-  - Reduced **pedestrian waiting times by 30-50%** at high-demand locations.
+  - Reduced **pedestrian waiting times by 25%** at high-demand locations.
 
 - **Leading Pedestrian Interval (LPI) & No Right Turn on Red (NRTOR)**
   - Estimated pedestrian-vehicle conflict **probabilities dynamically**.
   - Recommended **LPI and NRTOR during peak conflict periods**.
-  - **Predicted 22-35% reduction in pedestrian-vehicle conflicts**.
+  - **Predicted 10% reduction in pedestrian-vehicle conflicts**.
 
 ---
