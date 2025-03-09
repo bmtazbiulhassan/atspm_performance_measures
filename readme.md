@@ -54,8 +54,8 @@ CP_{P-V} = \sum_l W_l^{Adj} \times (1 - e^{-k \times H(P_{exp}, V_{exp,l})})
 $$
 
 where:
-- $$\ P_{exp} \ = Pedestrian Exposure.
-- $$\  V_{exp,l} \ = Right-turn Vehicle Exposure.
+- $$\ P_{exp} \$$ = Pedestrian Exposure.
+- $$\  V_{exp,l} \$$ = Right-turn Vehicle Exposure.
 - $$\ W_l^{Adj} \$$ = Adjusted lane-specific weight (adjusts for shared vs. dedicated right-turn lanes).
 - $$\ H \$$ = Harmonic mean of pedestrian and vehicle exposure.
 - $$\ k \$$ = Decay constant to **prevent overestimation of extreme conflict values**.
