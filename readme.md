@@ -1,4 +1,4 @@
-# **Extracting and Transforming ATSPM Performance Measures to Recommend Key Performance Metrics for Pedestrian Safety and Efficiency at Intersections**
+# **Using ATSPM Performance Measures to Recommend Key Performance Metrics for Pedestrian Safety and Efficiency at Intersections**
 
 ## **🚦 Project Overview**
 This project focuses on **extracting, transforming, and analyzing ATSPM (Automated Traffic Signal Performance Measures) event log data** to develop a **data-driven recommendation system** for improving pedestrian safety and efficiency at signalized intersections. By analyzing **cycle-level performance measures**, we identify high-risk pedestrian-vehicle conflict scenarios and suggest the **optimal implementation of Pedestrian Recall (PR), Leading Pedestrian Interval (LPI), and No Right Turn on Red (NRTOR).**
