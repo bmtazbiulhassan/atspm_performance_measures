@@ -30,9 +30,9 @@ P_{PP} = \frac{\alpha + X}{\alpha + \beta + N}
 $$
 
 where:
-- $$\( X \)$$ = Cycles with pedestrian presence.
-- $$\( N \)$$ = Total cycles in the time period.
-- $$\( (\alpha, \beta) \)$$ = Shape parameters of the Beta prior, learned from data.
+- $$\ X \$$ = Cycles with pedestrian presence.
+- $$\ N \$$ = Total cycles in the time period.
+- $$\ \alpha, \beta \$$ = Shape parameters of the Beta prior, learned from data.
 
 This **probabilistic approach adjusts for data sparsity** and **accounts for variability in pedestrian arrivals**.
 
@@ -54,9 +54,9 @@ CP_{P-V} = \sum_l W_l^{Adj} \times (1 - e^{-k \times H(P_{exp}, V_{exp,l})})
 $$
 
 where:
-- $$\( W_l \)$$ = Lane-specific weight (adjusts for shared vs. dedicated right-turn lanes).
-- $$\( H \)$$ = Harmonic mean of pedestrian and vehicle exposure.
-- $$\( k \)$$ = Decay constant to **prevent overestimation of extreme conflict values**.
+- $$\ W_l \$$ = Lane-specific weight (adjusts for shared vs. dedicated right-turn lanes).
+- $$\ H \$$ = Harmonic mean of pedestrian and vehicle exposure.
+- $$\ k \$$ = Decay constant to **prevent overestimation of extreme conflict values**.
 
 **LPI and NRTOR were recommended if conflict propensity exceeded the 50th percentile.**
 
