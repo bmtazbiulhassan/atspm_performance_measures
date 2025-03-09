@@ -23,9 +23,11 @@ This project focuses on **extracting, transforming, and analyzing ATSPM (Automat
 ### **2️⃣ Beta-Binomial Model for Pedestrian Presence Probability**
 Instead of using a simple proportion, a **Beta-Binomial model** was employed to **capture variations in pedestrian demand**, ensuring robust estimates under **low pedestrian volume conditions**.
 
+$$
 \[
 P_{PP} = \frac{\alpha + X}{\alpha + \beta + N}
 \]
+$$
 
 where:
 - \( X \) = Cycles with pedestrian presence.
